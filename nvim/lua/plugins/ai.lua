@@ -4,10 +4,22 @@ require("codecompanion").setup({
 	},
 	interactions = {
 		chat = {
-			adapter = "gemini_cli",
+			adapter = "gemini",
+		},
+		inline = {
+			adapter = "gemini",
 		},
 	},
 	adapters = {
+		http = {
+			gemini = function()
+				return require("codecompanion.adapters").extend("gemini", {
+					env = {
+						api_key = "GEMINI_API_KEY",
+					},
+				})
+			end,
+		},
 		acp = {
 			gemini_cli = function()
 				return require("codecompanion.adapters").extend("gemini_cli", {
