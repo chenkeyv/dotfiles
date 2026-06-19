@@ -1,3 +1,35 @@
+add_newline = false
+command_timeout = 200
+scan_timeout = 10
+
+format = "$directory$git_branch$character"
+right_format = "$cmd_duration$jobs$time"
+
 [directory]
 fish_style_pwd_dir_length = 1
 truncate_to_repo = false
+
+[git_branch]
+format = "[$symbol$branch]($style) "
+symbol = " "
+truncation_length = 32
+truncation_symbol = "..."
+
+[git_status]
+disabled = true
+
+[git_metrics]
+disabled = true
+
+[cmd_duration]
+format = "[$duration]($style) "
+min_time = 1000
+
+[time]
+disabled = false
+format = "[$time]($style)"
+time_format = "%R"
+
+[character]
+success_symbol = "[❯](bold green)"
+error_symbol = "[❯](bold red)"

@@ -1,23 +1,5 @@
-export EDITOR='nvim'
-export PAGER='bat'
-export MANROFFOPT="-c"
-# export MANPAGER="sh -c 'col -bx | bat -plman'"
-
-export ZSH_AUTOSUGGEST_STRATEGY=(match_prev_cmd completion history)
-#
-export GOPATH=${HOME}/go
-export GOBIN=${GOPATH}/bin
-export JAVA_HOME=/usr/local/opt/java
-
-export ZSH_MODULES_ROOT=${HOME}/.zmodules
-export ZSH_PLUGINS_DIR=${ZSH_MODULES_ROOT}/plugins
-
-export VCPKG_ROOT=${HOME}/Codebases/ClionProjects/vcpkg
-
-# history
-export HISTSIZE=50000
-export SAVEHIST=10000
-
-# homebrew
-export HOMEBREW_BAT=1
-# export HOMEBREW_NO_INSTALL_FROM_API=1
+export ZDOTDIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
+export EDITOR="${EDITOR:-nvim}"
+export VISUAL="${VISUAL:-$EDITOR}"
+export PAGER="${PAGER:-bat}"
+export MANROFFOPT="${MANROFFOPT:--c}"

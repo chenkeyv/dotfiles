@@ -3,12 +3,21 @@ set -euo pipefail
 
 usage() {
 	cat <<'EOF'
-Usage: ./setup.sh [--dry-run] [--copy] [--force] [--skip-neovim-install]
+Usage: ./setup.sh [--dry-run] [--copy] [--force] [--skip-neovim-install] [--skip-zsh-install]
 
 Installs the currently maintained dotfiles.
 
-By default this installs Neovim HEAD/nightly and links the Neovim config:
-  ~/.config/nvim -> <repo>/nvim
+By default this installs Neovim HEAD/nightly, Zsh tooling, and links:
+  ~/.config/nvim       -> <repo>/nvim
+  ~/.zshenv            -> <repo>/zsh/zshenv
+  ~/.zprofile          -> <repo>/zsh/zprofile
+  ~/.zshrc             -> <repo>/zsh/zshrc
+  ~/.config/zsh/.zshenv -> <repo>/zsh/zshenv
+  ~/.config/zsh/.zprofile -> <repo>/zsh/zprofile
+  ~/.config/zsh/.zshrc -> <repo>/zsh/zshrc
+  ~/.config/zsh/plugins.txt -> <repo>/zsh/plugins.txt
+  ~/.config/zsh/plugins-late.txt -> <repo>/zsh/plugins-late.txt
+  ~/.config/starship.toml -> <repo>/starship/starship.toml
 
 On Arch Linux, this bootstraps paru when needed and installs neovim-git.
 On macOS and other Linux distributions, this installs Homebrew when needed and
@@ -17,11 +26,12 @@ uses it to install Neovim HEAD.
 Options:
   --dry-run              Print the actions without changing files.
   --copy                 Copy nvim instead of creating a symlink.
-  --force                Replace an existing ~/.config/nvim without prompting.
-  --skip-neovim-install  Only install the config; do not install or update Neovim.
+  --force                Replace existing targets without prompting.
+  --skip-neovim-install  Only install/link configs; do not install or update Neovim.
+  --skip-zsh-install     Only install/link configs; do not install or update Zsh tooling.
   -h, --help             Show this help.
 
-Other configs in this repo are intentionally not installed because they are stale.
+Only Neovim and Zsh configs are installed.
 EOF
 }
 
@@ -29,6 +39,7 @@ dry_run=0
 copy_mode=0
 force=0
 skip_neovim_install=0
+skip_zsh_install=0
 
 while [ "$#" -gt 0 ]; do
 	case "$1" in
@@ -44,6 +55,9 @@ while [ "$#" -gt 0 ]; do
 		--skip-neovim-install)
 			skip_neovim_install=1
 			;;
+		--skip-zsh-install)
+			skip_zsh_install=1
+			;;
 		-h | --help)
 			usage
 			exit 0
@@ -58,11 +72,29 @@ while [ "$#" -gt 0 ]; do
 done
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-source_nvim="${script_dir}/nvim"
 target_config="${XDG_CONFIG_HOME:-${HOME}/.config}"
-target_nvim="${target_config}/nvim"
 backup_root="${target_config}/dotfiles-backups"
 timestamp="$(date +%Y%m%d%H%M%S)"
+
+source_nvim="${script_dir}/nvim"
+source_zshenv="${script_dir}/zsh/zshenv"
+source_zprofile="${script_dir}/zsh/zprofile"
+source_zshrc="${script_dir}/zsh/zshrc"
+source_zsh_plugins="${script_dir}/zsh/plugins.txt"
+source_zsh_plugins_late="${script_dir}/zsh/plugins-late.txt"
+source_starship="${script_dir}/starship/starship.toml"
+
+target_nvim="${target_config}/nvim"
+target_zsh_dir="${target_config}/zsh"
+target_zshenv="${HOME}/.zshenv"
+target_zprofile="${HOME}/.zprofile"
+target_zshrc_home="${HOME}/.zshrc"
+target_zshenv_xdg="${target_zsh_dir}/.zshenv"
+target_zprofile_xdg="${target_zsh_dir}/.zprofile"
+target_zshrc="${target_zsh_dir}/.zshrc"
+target_zsh_plugins="${target_zsh_dir}/plugins.txt"
+target_zsh_plugins_late="${target_zsh_dir}/plugins-late.txt"
+target_starship="${target_config}/starship.toml"
 
 run() {
 	printf '+'
@@ -100,9 +132,82 @@ run_in_dir() {
 }
 
 ensure_source() {
-	if [ ! -d "$source_nvim" ]; then
-		echo "Missing source directory: $source_nvim" >&2
+	local source_path="$1"
+
+	if [ ! -e "$source_path" ]; then
+		echo "Missing source path: $source_path" >&2
 		exit 1
+	fi
+}
+
+confirm_replace() {
+	local target_path="$1"
+
+	if [ "$force" -eq 1 ] || [ "$dry_run" -eq 1 ]; then
+		return
+	fi
+
+	printf 'Replace existing %s? [y/N] ' "$target_path"
+	read -r answer
+	case "$answer" in
+		y | Y | yes | YES)
+			;;
+		*)
+			echo "Aborted."
+			exit 1
+			;;
+	esac
+}
+
+backup_existing() {
+	local target_path="$1"
+	local backup_name="$2"
+
+	if [ ! -e "$target_path" ] && [ ! -L "$target_path" ]; then
+		return
+	fi
+
+	confirm_replace "$target_path"
+	run mkdir -p "$backup_root"
+	run mv "$target_path" "${backup_root}/${backup_name}.${timestamp}"
+}
+
+link_file() {
+	local source_path="$1"
+	local target_path="$2"
+	local backup_name="$3"
+
+	ensure_source "$source_path"
+	run mkdir -p "$(dirname "$target_path")"
+
+	if [ -L "$target_path" ] && [ "$(readlink "$target_path")" = "$source_path" ]; then
+		echo "Already linked: $target_path -> $source_path"
+		return
+	fi
+
+	backup_existing "$target_path" "$backup_name"
+	run ln -s "$source_path" "$target_path"
+}
+
+install_dir() {
+	local source_path="$1"
+	local target_path="$2"
+	local backup_name="$3"
+
+	ensure_source "$source_path"
+	run mkdir -p "$(dirname "$target_path")"
+
+	if [ -L "$target_path" ] && [ "$(readlink "$target_path")" = "$source_path" ]; then
+		echo "Already linked: $target_path -> $source_path"
+		return
+	fi
+
+	backup_existing "$target_path" "$backup_name"
+
+	if [ "$copy_mode" -eq 1 ]; then
+		run cp -R "$source_path" "$target_path"
+	else
+		run ln -s "$source_path" "$target_path"
 	fi
 }
 
@@ -156,18 +261,6 @@ ensure_homebrew() {
 	fi
 }
 
-install_neovim_homebrew() {
-	ensure_homebrew
-
-	if command -v brew >/dev/null 2>&1 && HOMEBREW_NO_AUTO_UPDATE=1 brew list --versions neovim >/dev/null 2>&1 && has_head_neovim; then
-		return
-	elif command -v brew >/dev/null 2>&1 && HOMEBREW_NO_AUTO_UPDATE=1 brew list --versions neovim >/dev/null 2>&1; then
-		run env HOMEBREW_NO_AUTO_UPDATE=1 brew reinstall --HEAD neovim
-	else
-		run env HOMEBREW_NO_AUTO_UPDATE=1 brew install --HEAD neovim
-	fi
-}
-
 is_arch_linux() {
 	if [ ! -r /etc/os-release ]; then
 		return 1
@@ -203,6 +296,18 @@ ensure_paru() {
 	run_in_dir "${build_dir}/paru" makepkg -si --noconfirm
 }
 
+install_neovim_homebrew() {
+	ensure_homebrew
+
+	if command -v brew >/dev/null 2>&1 && HOMEBREW_NO_AUTO_UPDATE=1 brew list --versions neovim >/dev/null 2>&1 && has_head_neovim; then
+		return
+	elif command -v brew >/dev/null 2>&1 && HOMEBREW_NO_AUTO_UPDATE=1 brew list --versions neovim >/dev/null 2>&1; then
+		run env HOMEBREW_NO_AUTO_UPDATE=1 brew reinstall --HEAD neovim
+	else
+		run env HOMEBREW_NO_AUTO_UPDATE=1 brew install --HEAD neovim
+	fi
+}
+
 install_neovim_arch() {
 	if pacman -Q neovim-git >/dev/null 2>&1; then
 		echo "neovim-git is already installed."
@@ -211,6 +316,16 @@ install_neovim_arch() {
 
 	ensure_paru
 	run paru -S --needed --noconfirm neovim-git
+}
+
+install_zsh_tools_homebrew() {
+	ensure_homebrew
+	run env HOMEBREW_NO_AUTO_UPDATE=1 brew install zsh antidote starship fzf zoxide atuin bat eza fd ripgrep
+}
+
+install_zsh_tools_arch() {
+	ensure_paru
+	run paru -S --needed --noconfirm zsh zsh-antidote starship fzf zoxide atuin bat eza fd ripgrep
 }
 
 install_neovim() {
@@ -232,57 +347,50 @@ install_neovim() {
 	esac
 }
 
-confirm_replace() {
-	if [ "$force" -eq 1 ] || [ "$dry_run" -eq 1 ]; then
-		return
-	fi
-
-	printf 'Replace existing %s? [y/N] ' "$target_nvim"
-	read -r answer
-	case "$answer" in
-		y | Y | yes | YES)
+install_zsh_tools() {
+	case "$(uname -s)" in
+		Darwin)
+			install_zsh_tools_homebrew
+			;;
+		Linux)
+			if is_arch_linux; then
+				install_zsh_tools_arch
+			else
+				install_zsh_tools_homebrew
+			fi
 			;;
 		*)
-			echo "Aborted."
+			echo "Unsupported OS: $(uname -s). Install Zsh tooling manually, then rerun this script." >&2
 			exit 1
 			;;
 	esac
 }
 
-backup_existing() {
-	if [ ! -e "$target_nvim" ] && [ ! -L "$target_nvim" ]; then
-		return
-	fi
-
-	if [ -L "$target_nvim" ] && [ "$(readlink "$target_nvim")" = "$source_nvim" ]; then
-		echo "Neovim config is already linked: $target_nvim -> $source_nvim"
-		exit 0
-	fi
-
-	confirm_replace
-	run mkdir -p "$backup_root"
-	run mv "$target_nvim" "${backup_root}/nvim.${timestamp}"
-}
-
-install_nvim() {
-	ensure_source
-	run mkdir -p "$target_config"
-	backup_existing
-
-	if [ "$copy_mode" -eq 1 ]; then
-		run cp -R "$source_nvim" "$target_nvim"
-	else
-		run ln -s "$source_nvim" "$target_nvim"
-	fi
+install_configs() {
+	install_dir "$source_nvim" "$target_nvim" "nvim"
+	link_file "$source_zshenv" "$target_zshenv" "zshenv"
+	link_file "$source_zprofile" "$target_zprofile" "zprofile"
+	link_file "$source_zshrc" "$target_zshrc_home" "zshrc.home"
+	link_file "$source_zshenv" "$target_zshenv_xdg" "zshenv.xdg"
+	link_file "$source_zprofile" "$target_zprofile_xdg" "zprofile.xdg"
+	link_file "$source_zshrc" "$target_zshrc" "zshrc"
+	link_file "$source_zsh_plugins" "$target_zsh_plugins" "zsh-plugins.txt"
+	link_file "$source_zsh_plugins_late" "$target_zsh_plugins_late" "zsh-plugins-late.txt"
+	link_file "$source_starship" "$target_starship" "starship.toml"
 }
 
 if [ "$skip_neovim_install" -eq 0 ]; then
 	install_neovim
 fi
-install_nvim
+
+if [ "$skip_zsh_install" -eq 0 ]; then
+	install_zsh_tools
+fi
+
+install_configs
 
 if [ "$dry_run" -eq 1 ]; then
 	echo "Dry run complete. No files were changed."
 else
-	echo "Neovim config installed."
+	echo "Dotfiles installed."
 fi

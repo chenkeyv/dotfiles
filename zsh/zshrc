@@ -1,59 +1,118 @@
-# Enable Powerlevel10k instant prompt. Should stay close to the top of ~/.zshrc.
-# Initialization code that may require console input (password prompts, [y/n]
-# confirmations, etc.) must go above this block; everything else may go below.
-if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
-  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
-fi
+[[ -o interactive ]] || return
+
+typeset -U path PATH fpath
+
+for dir in \
+	"$HOME/.local/bin" \
+	"$HOME/bin" \
+	"$HOME/go/bin" \
+	"$HOME/.cargo/bin" \
+	"$HOME/.bun/bin" \
+	"/opt/homebrew/opt/rustup/bin"
+do
+	[[ -d "$dir" ]] && path=("$dir" $path)
+done
+
+typeset -ga ZSH_AUTOSUGGEST_STRATEGY=(match_prev_cmd completion history)
+
+export HISTFILE="${XDG_STATE_HOME:-$HOME/.local/state}/zsh/history"
+export HISTSIZE=50000
+export SAVEHIST=50000
+mkdir -p "${HISTFILE:h}" "${XDG_CACHE_HOME:-$HOME/.cache}/zsh"
 
 setopt auto_cd
-
-export PATH=${HOME}/bin:${PATH}
-export PATH=${GOBIN}:${PATH}
-export PATH=${HOME}/.ghcup/bin:${PATH}
-# . "$HOME/.cargo/env"
-
-setopt inc_append_history_time
+setopt auto_pushd
 setopt extended_history
 setopt hist_expire_dups_first
 setopt hist_ignore_dups
 setopt hist_ignore_space
 setopt hist_verify
+setopt inc_append_history_time
+setopt pushd_ignore_dups
 setopt share_history
 
-setopt auto_pushd
-setopt pushd_ignore_dups
-setopt pushdminus
+unsetopt beep
+unsetopt flow_control
 
 alias -g ...='../..'
 alias -g ....='../../..'
 alias -g .....='../../../..'
 
 alias -- -='cd -'
-alias l="ls -lah"
-alias ll="ls -lh"
-alias la="ls -lAh"
-alias ~~="~"
+alias vim='nvim'
+alias history='history 1'
+alias ~~='~'
 
-alias vim="nvim"
-alias ls="lsd"
-alias history="history 1"
+if (( $+commands[eza] )); then
+	alias ls='eza --group-directories-first'
+	alias l='eza -lah --group-directories-first'
+	alias ll='eza -lh --group-directories-first'
+	alias la='eza -lAh --group-directories-first'
+elif (( $+commands[lsd] )); then
+	alias ls='lsd'
+	alias l='lsd -lah'
+	alias ll='lsd -lh'
+	alias la='lsd -lAh'
+else
+	alias l='ls -lah'
+	alias ll='ls -lh'
+	alias la='ls -lAh'
+fi
 
-source "${ZSH_MODULES_ROOT}/plugins/powerlevel10k/powerlevel10k.zsh-theme"
+[[ -r "${ZDOTDIR}/local.zsh" ]] && source "${ZDOTDIR}/local.zsh"
 
-source ~/.p10k.zsh
+zstyle ':completion:*' cache-path "${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompcache"
+zstyle ':completion:*' complete true
+zstyle ':completion:*' completer _extensions _complete _approximate
+zstyle ':completion:*' file-sort modification
+zstyle ':completion:*' list-colors ''
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z-_}={A-Za-z_-}' 'r:|=*' 'l:|=* r:|=*'
+zstyle ':completion:*' menu select
+zstyle ':completion:*' use-cache on
+zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-directories
 
-fpath=(${ZSH_MODULES_ROOT}/completions/zsh-completions/src $fpath)
-fpath=(${ZSH_MODULES_ROOT}/completions/custom $fpath)
+autoload -Uz compinit
 
-source "${ZSH_MODULES_ROOT}/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh"
-source "${ZSH_MODULES_ROOT}/plugins/F-Sy-H/F-Sy-H.plugin.zsh"
+antidote_file=''
+for candidate in \
+	"${HOMEBREW_PREFIX:-}/opt/antidote/share/antidote/antidote.zsh" \
+	"/opt/homebrew/opt/antidote/share/antidote/antidote.zsh" \
+	"/usr/local/opt/antidote/share/antidote/antidote.zsh" \
+	"/home/linuxbrew/.linuxbrew/opt/antidote/share/antidote/antidote.zsh" \
+	"/usr/share/zsh-antidote/antidote.zsh" \
+	"/usr/share/antidote/antidote.zsh"
+do
+	if [[ -r "$candidate" ]]; then
+		antidote_file="$candidate"
+		break
+	fi
+done
 
-source "${ZSH_MODULES_ROOT}/customs/completion.zsh"
-source "${ZSH_MODULES_ROOT}/customs/upgrade.zsh"
+if [[ -n "$antidote_file" ]]; then
+	source "$antidote_file"
 
+	antidote_bundle() {
+		local source_file="$1"
+		local bundle_file="$2"
 
-source "${HOME}/.iterm2_shell_integration.zsh"
+		[[ -f "$source_file" ]] || return 0
+		if [[ ! "$bundle_file" -nt "$source_file" ]]; then
+			antidote bundle <"$source_file" >|"$bundle_file"
+		fi
+		source "$bundle_file"
+	}
 
-alias interviews="cd ~/OneDrive/Documents/Interviews"
-alias memo="nvim /Users/keyv/Documents/memo/"
+	antidote_bundle "${ZDOTDIR}/plugins.txt" "${XDG_CACHE_HOME:-$HOME/.cache}/zsh/plugins.zsh"
+else
+	print -u2 'warning: antidote was not found; zsh plugins were not loaded'
+fi
 
+compinit -d "${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompdump"
+
+if (( $+functions[antidote_bundle] )); then
+	antidote_bundle "${ZDOTDIR}/plugins-late.txt" "${XDG_CACHE_HOME:-$HOME/.cache}/zsh/plugins-late.zsh"
+fi
+
+(( $+commands[zoxide] )) && eval "$(zoxide init zsh)"
+(( $+commands[atuin] )) && eval "$(atuin init zsh)"
+(( $+commands[starship] )) && eval "$(starship init zsh)"

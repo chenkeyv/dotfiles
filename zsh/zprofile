@@ -1,0 +1,9 @@
+for brew_bin in /opt/homebrew/bin/brew /usr/local/bin/brew /home/linuxbrew/.linuxbrew/bin/brew; do
+	if [[ -x "$brew_bin" ]]; then
+		eval "$("$brew_bin" shellenv)"
+		break
+	fi
+done
+
+[[ -r "$HOME/.orbstack/shell/init.zsh" ]] && source "$HOME/.orbstack/shell/init.zsh"
+[[ -r "$HOME/.swiftly/env.sh" ]] && source "$HOME/.swiftly/env.sh"
