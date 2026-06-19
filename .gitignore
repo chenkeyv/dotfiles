@@ -1,1 +1,4 @@
 .DS_Store
+nvim/.claude/
+nvim/nvim-pack-lock.json
+nvim/nvim.log
