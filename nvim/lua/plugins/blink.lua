@@ -1,5 +1,7 @@
 local source_priority = {
 	lsp = 3,
+	cmdline = 3,
+	codecompanion = 3,
 	path = 2,
 	buffer = 1,
 }
@@ -7,8 +9,8 @@ require("blink.cmp").setup({
 	fuzzy = {
 		sorts = {
 			function(a, b)
-				local a_priority = source_priority[a.source_id]
-				local b_priority = source_priority[b.source_id]
+				local a_priority = source_priority[a.source_id] or 0
+				local b_priority = source_priority[b.source_id] or 0
 				if a_priority ~= b_priority then
 					return a_priority > b_priority
 				end
@@ -74,7 +76,7 @@ require("blink.cmp").setup({
 			preset = "enter",
 			["<Tab>"] = { "select_next", "fallback" },
 			["<S-Tab>"] = { "select_prev", "fallback" },
-			["CR"] = { "fallback" },
+			["<CR>"] = { "fallback" },
 		},
 		completion = {
 			list = {

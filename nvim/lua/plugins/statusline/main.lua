@@ -20,7 +20,8 @@ local first_item = {
 local vimode = {
 
 	provider = function()
-		return string.format(" %s ", u.vi.text[vim.fn.mode()])
+		local mode = vim.fn.mode()
+		return string.format(" %s ", u.vi.text[mode] or mode:upper())
 	end,
 	hl = {
 		fg = u.colors.darkblue,
