@@ -1,7 +1,5 @@
 local M = {}
 
-local conditions = require("heirline.conditions")
-local utils = require("heirline.utils")
 local u = require("plugins.statusline.utils.colors")
 
 local git_icon = {

@@ -21,7 +21,6 @@ vim.pack.add({
 	"https://github.com/neovim/nvim-lspconfig",
 	"https://github.com/nvim-tree/nvim-web-devicons",
 	"https://github.com/nvim-lua/plenary.nvim",
-	"https://github.com/olimorris/codecompanion.nvim",
 	"https://github.com/folke/noice.nvim",
 	"https://github.com/rcarriga/nvim-notify",
 	"https://github.com/Bekaboo/dropbar.nvim",
@@ -31,6 +30,10 @@ vim.pack.add({
 	"https://github.com/lewis6991/satellite.nvim",
 	"https://github.com/NMAC427/guess-indent.nvim",
 	"https://github.com/stevearc/conform.nvim",
+})
+
+vim.pack.add({ "https://github.com/olimorris/codecompanion.nvim" }, {
+	load = function() end,
 })
 
 -- register PackUpdate to update plugins

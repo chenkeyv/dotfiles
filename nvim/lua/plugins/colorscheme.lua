@@ -71,6 +71,7 @@ local function clear_statuscolumn_backgrounds()
 end
 
 vim.api.nvim_create_autocmd("ColorScheme", {
+	group = vim.api.nvim_create_augroup("TransparentStatusColumnBackgrounds", { clear = true }),
 	callback = clear_statuscolumn_backgrounds,
 })
 
