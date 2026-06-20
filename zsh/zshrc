@@ -114,5 +114,8 @@ if (( $+functions[antidote_bundle] )); then
 fi
 
 (( $+commands[zoxide] )) && eval "$(zoxide init zsh)"
-(( $+commands[atuin] )) && eval "$(atuin init zsh)"
+(( $+commands[atuin] )) && eval "$(atuin init zsh --disable-up-arrow)"
+
+bindkey -e
+
 (( $+commands[starship] )) && eval "$(starship init zsh)"
