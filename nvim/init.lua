@@ -19,6 +19,13 @@ vim.o.tabstop = 4
 vim.o.softtabstop = 4
 vim.o.shiftwidth = 4
 vim.o.signcolumn = "yes:2"
+vim.o.foldcolumn = "1"
+vim.o.numberwidth = 4
+vim.opt.fillchars:append({
+	foldopen = "",
+	foldclose = "",
+	foldsep = " ",
+})
 vim.o.number = true
 vim.o.relativenumber = true
 vim.o.laststatus = 3

@@ -3,9 +3,7 @@ require("snacks").setup({
 	input = { enabled = true },
 	-- indent = {},
 	statuscolumn = {
-		folds = {
-			open = true,
-		},
+		enabled = false,
 	},
 	terminal = {},
 	words = {

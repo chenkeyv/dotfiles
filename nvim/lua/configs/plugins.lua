@@ -14,6 +14,7 @@ vim.pack.add({
 	"https://github.com/saghen/blink.indent",
 	"https://github.com/rebelot/kanagawa.nvim",
 	"https://github.com/folke/snacks.nvim",
+	"https://github.com/luukvbaal/statuscol.nvim",
 	"https://github.com/MunifTanjim/nui.nvim",
 	"https://github.com/rebelot/heirline.nvim",
 	"https://github.com/linrongbin16/lsp-progress.nvim",
@@ -48,6 +49,7 @@ require("plugins.indent")
 
 require("plugins.treesitter")
 require("plugins.snacks")
+require("plugins.statuscolumn")
 require("plugins.blink")
 require("plugins.noice")
 require("plugins.notify")

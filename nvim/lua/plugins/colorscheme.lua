@@ -9,6 +9,9 @@ require("kanagawa").setup({
 			FloatBorder = { bg = "none" },
 			FloatTitle = { bg = "none" },
 			SignColumn = { bg = "none" },
+			CursorLineSign = { bg = "none" },
+			FoldColumn = { bg = "none" },
+			CursorLineFold = { bg = "none" },
 			StatusLineNC = { bg = "none" },
 			StatusLine = { bg = "none" },
 			LineNr = { fg = theme.ui.special, bg = "none" },
@@ -38,3 +41,37 @@ require("kanagawa").setup({
 	end,
 })
 vim.cmd.colorscheme("kanagawa")
+
+local statuscolumn_bg_groups = {
+	"FoldColumn",
+	"CursorLineFold",
+	"GitSignsAdd",
+	"GitSignsAddCul",
+	"GitSignsChange",
+	"GitSignsChangeCul",
+	"GitSignsDelete",
+	"GitSignsDeleteCul",
+	"GitSignsTopdelete",
+	"GitSignsTopdeleteCul",
+	"GitSignsChangedelete",
+	"GitSignsChangedeleteCul",
+	"GitSignsUntracked",
+	"GitSignsUntrackedCul",
+}
+
+local function clear_statuscolumn_backgrounds()
+	for _, group in ipairs(statuscolumn_bg_groups) do
+		local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = group, link = false })
+		if ok and next(hl) then
+			hl.bg = nil
+			hl.ctermbg = nil
+			vim.api.nvim_set_hl(0, group, hl)
+		end
+	end
+end
+
+vim.api.nvim_create_autocmd("ColorScheme", {
+	callback = clear_statuscolumn_backgrounds,
+})
+
+clear_statuscolumn_backgrounds()
