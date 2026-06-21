@@ -14,6 +14,7 @@ vim.pack.add({
 	"https://github.com/saghen/blink.indent",
 	"https://github.com/rebelot/kanagawa.nvim",
 	"https://github.com/folke/snacks.nvim",
+	"https://github.com/chenkeyv/acp.nvim",
 	"https://github.com/luukvbaal/statuscol.nvim",
 	"https://github.com/MunifTanjim/nui.nvim",
 	"https://github.com/rebelot/heirline.nvim",
