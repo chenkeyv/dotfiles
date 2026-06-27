@@ -3,11 +3,14 @@ set -euo pipefail
 
 usage() {
 	cat <<'EOF'
-Usage: ./setup.sh [--dry-run] [--copy] [--force] [--skip-neovim-install] [--skip-zsh-install]
+Usage: ./setup.sh [--dry-run] [--copy] [--force]
+                  [--skip-neovim-install] [--skip-zsh-install]
+                  [--skip-agent-toolbox-install]
 
 Installs the currently maintained dotfiles.
 
-By default this installs Neovim HEAD/nightly, Zsh tooling, and links:
+By default this installs Neovim HEAD/nightly, Zsh tooling, Agent Toolbox for
+Codex, and links:
   ~/.config/nvim       -> <repo>/nvim
   ~/.zshenv            -> <repo>/zsh/zshenv
   ~/.zprofile          -> <repo>/zsh/zprofile
@@ -29,9 +32,11 @@ Options:
   --force                Replace existing targets without prompting.
   --skip-neovim-install  Only install/link configs; do not install or update Neovim.
   --skip-zsh-install     Only install/link configs; do not install or update Zsh tooling.
+  --skip-agent-toolbox-install
+                         Do not install or update the Agent Toolbox Codex plugin.
   -h, --help             Show this help.
 
-Only Neovim and Zsh configs are installed.
+Only Neovim, Zsh, Starship, and Agent Toolbox are installed.
 EOF
 }
 
@@ -40,6 +45,7 @@ copy_mode=0
 force=0
 skip_neovim_install=0
 skip_zsh_install=0
+skip_agent_toolbox_install=0
 
 while [ "$#" -gt 0 ]; do
 	case "$1" in
@@ -57,6 +63,9 @@ while [ "$#" -gt 0 ]; do
 			;;
 		--skip-zsh-install)
 			skip_zsh_install=1
+			;;
+		--skip-agent-toolbox-install)
+			skip_agent_toolbox_install=1
 			;;
 		-h | --help)
 			usage
@@ -83,6 +92,9 @@ source_zshrc="${script_dir}/zsh/zshrc"
 source_zsh_plugins="${script_dir}/zsh/plugins.txt"
 source_zsh_plugins_late="${script_dir}/zsh/plugins-late.txt"
 source_starship="${script_dir}/starship/starship.toml"
+agent_toolbox_marketplace="agent-toolbox"
+agent_toolbox_source="chenkeyv/agent-toolbox"
+agent_toolbox_selector="${agent_toolbox_marketplace}@${agent_toolbox_marketplace}"
 
 target_nvim="${target_config}/nvim"
 target_zsh_dir="${target_config}/zsh"
@@ -200,6 +212,13 @@ install_dir() {
 	if [ -L "$target_path" ] && [ "$(readlink "$target_path")" = "$source_path" ]; then
 		echo "Already linked: $target_path -> $source_path"
 		return
+	fi
+
+	if [ "$copy_mode" -eq 1 ] && [ -d "$target_path" ] && [ ! -L "$target_path" ]; then
+		if diff -qr "$source_path" "$target_path" >/dev/null 2>&1; then
+			echo "Already copied: $target_path"
+			return
+		fi
 	fi
 
 	backup_existing "$target_path" "$backup_name"
@@ -366,6 +385,46 @@ install_zsh_tools() {
 	esac
 }
 
+has_agent_toolbox_marketplace() {
+	codex plugin marketplace list 2>/dev/null |
+		awk -v name="$agent_toolbox_marketplace" \
+			'$1 == name { found = 1 } END { exit found ? 0 : 1 }'
+}
+
+has_agent_toolbox_plugin() {
+	codex plugin list 2>/dev/null |
+		awk -v selector="$agent_toolbox_selector" \
+			'$1 == selector && $2 == "installed," && $3 == "enabled" { found = 1 }
+			END { exit found ? 0 : 1 }'
+}
+
+install_agent_toolbox() {
+	if ! command -v codex >/dev/null 2>&1; then
+		if [ "$dry_run" -eq 1 ]; then
+			echo "Codex CLI not found; Agent Toolbox installation would require codex."
+			run codex plugin marketplace add "$agent_toolbox_source" --ref main
+			run codex plugin add "$agent_toolbox_selector"
+			return
+		fi
+
+		echo "Codex CLI is required to install Agent Toolbox." >&2
+		echo "Install Codex or rerun with --skip-agent-toolbox-install." >&2
+		exit 1
+	fi
+
+	if has_agent_toolbox_marketplace; then
+		echo "Agent Toolbox marketplace already configured."
+	else
+		run codex plugin marketplace add "$agent_toolbox_source" --ref main
+	fi
+
+	if has_agent_toolbox_plugin; then
+		echo "Agent Toolbox plugin already installed and enabled."
+	else
+		run codex plugin add "$agent_toolbox_selector"
+	fi
+}
+
 install_configs() {
 	install_dir "$source_nvim" "$target_nvim" "nvim"
 	link_file "$source_zshenv" "$target_zshenv" "zshenv"
@@ -385,6 +444,10 @@ fi
 
 if [ "$skip_zsh_install" -eq 0 ]; then
 	install_zsh_tools
+fi
+
+if [ "$skip_agent_toolbox_install" -eq 0 ]; then
+	install_agent_toolbox
 fi
 
 install_configs
