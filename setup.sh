@@ -36,7 +36,7 @@ Options:
                          Do not install or update the Agent Toolbox Codex plugin.
   -h, --help             Show this help.
 
-Only Neovim, Zsh, Starship, and Agent Toolbox are installed.
+Only Neovim, Zsh, Starship, ShellCheck, and Agent Toolbox are installed.
 EOF
 }
 
@@ -339,12 +339,12 @@ install_neovim_arch() {
 
 install_zsh_tools_homebrew() {
 	ensure_homebrew
-	run env HOMEBREW_NO_AUTO_UPDATE=1 brew install zsh antidote starship fzf zoxide atuin bat lsd fd ripgrep
+	run env HOMEBREW_NO_AUTO_UPDATE=1 brew install zsh antidote starship fzf zoxide atuin bat lsd fd ripgrep shellcheck
 }
 
 install_zsh_tools_arch() {
 	ensure_paru
-	run paru -S --needed --noconfirm zsh zsh-antidote starship fzf zoxide atuin bat lsd fd ripgrep
+	run paru -S --needed --noconfirm zsh zsh-antidote starship fzf zoxide atuin bat lsd fd ripgrep shellcheck
 }
 
 install_neovim() {

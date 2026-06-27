@@ -5,6 +5,7 @@ Configurations of my daily utils.
 - Neovim
 - Zsh
 - Agent Toolbox for Codex
+- ShellCheck validation
 
 ## Setup
 
@@ -21,7 +22,9 @@ detected and skipped.
 
 - Arch Linux: bootstraps `paru` when needed, then installs `neovim-git`.
 - macOS and other Linux distributions: uses Homebrew to install Neovim HEAD.
-- Zsh: uses Starship for the prompt, Antidote for plugin management, and F-Sy-H for syntax highlighting.
+- Zsh: uses Starship for the prompt, Antidote for plugin management, and F-Sy-H for syntax
+  highlighting.
+- Shell scripts: installs ShellCheck for local validation.
 - Agent Toolbox: uses `codex plugin marketplace add chenkeyv/agent-toolbox --ref main`, then installs
   `agent-toolbox@agent-toolbox`.
 
@@ -45,4 +48,12 @@ Skip Agent Toolbox installation:
 
 ```sh
 ./setup.sh --skip-agent-toolbox-install
+```
+
+## Validation
+
+```sh
+bash -n setup.sh
+shellcheck setup.sh
+zsh -n zsh/zshenv zsh/zprofile zsh/zshrc
 ```
