@@ -1,5 +1,7 @@
 # dotfiles
 
+[![CI][ci-badge]][ci]
+
 Configurations of my daily utils.
 
 - Neovim
@@ -57,3 +59,12 @@ bash -n setup.sh
 shellcheck setup.sh
 zsh -n zsh/zshenv zsh/zprofile zsh/zshrc
 ```
+
+Or run all local checks with:
+
+```sh
+make validate
+```
+
+[ci]: https://github.com/chenkeyv/dotfiles/actions/workflows/ci.yml
+[ci-badge]: https://github.com/chenkeyv/dotfiles/actions/workflows/ci.yml/badge.svg

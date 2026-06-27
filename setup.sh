@@ -95,6 +95,8 @@ source_starship="${script_dir}/starship/starship.toml"
 agent_toolbox_marketplace="agent-toolbox"
 agent_toolbox_source="chenkeyv/agent-toolbox"
 agent_toolbox_selector="${agent_toolbox_marketplace}@${agent_toolbox_marketplace}"
+zsh_tools_homebrew=(zsh antidote starship fzf zoxide atuin bat lsd fd ripgrep shellcheck)
+zsh_tools_arch=(zsh zsh-antidote starship fzf zoxide atuin bat lsd fd ripgrep shellcheck)
 
 target_nvim="${target_config}/nvim"
 target_zsh_dir="${target_config}/zsh"
@@ -236,7 +238,7 @@ has_head_neovim() {
 	fi
 
 	local version
-	version="$(nvim --version 2>/dev/null | sed -n '1p')"
+	version="$(NVIM_LOG_FILE=/dev/null nvim --version 2>/dev/null | sed -n '1p')"
 	case "$version" in
 		*dev* | *HEAD*)
 			echo "Neovim HEAD/dev build already installed: $version"
@@ -268,7 +270,12 @@ ensure_homebrew() {
 		return
 	fi
 
-	run bash -c 'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+	local install_url
+	install_url="https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
+	run env NONINTERACTIVE=1 bash -c \
+		"/bin/bash -c \"\$(curl -fsSL \"\$1\")\"" \
+		bash \
+		"$install_url"
 
 	if [ "$dry_run" -eq 1 ]; then
 		return
@@ -318,9 +325,14 @@ ensure_paru() {
 install_neovim_homebrew() {
 	ensure_homebrew
 
-	if command -v brew >/dev/null 2>&1 && HOMEBREW_NO_AUTO_UPDATE=1 brew list --versions neovim >/dev/null 2>&1 && has_head_neovim; then
+	if command -v brew >/dev/null 2>&1 &&
+		HOMEBREW_NO_AUTO_UPDATE=1 brew list --versions neovim >/dev/null 2>&1 &&
+		has_head_neovim
+	then
 		return
-	elif command -v brew >/dev/null 2>&1 && HOMEBREW_NO_AUTO_UPDATE=1 brew list --versions neovim >/dev/null 2>&1; then
+	elif command -v brew >/dev/null 2>&1 &&
+		HOMEBREW_NO_AUTO_UPDATE=1 brew list --versions neovim >/dev/null 2>&1
+	then
 		run env HOMEBREW_NO_AUTO_UPDATE=1 brew reinstall --HEAD neovim
 	else
 		run env HOMEBREW_NO_AUTO_UPDATE=1 brew install --HEAD neovim
@@ -339,12 +351,12 @@ install_neovim_arch() {
 
 install_zsh_tools_homebrew() {
 	ensure_homebrew
-	run env HOMEBREW_NO_AUTO_UPDATE=1 brew install zsh antidote starship fzf zoxide atuin bat lsd fd ripgrep shellcheck
+	run env HOMEBREW_NO_AUTO_UPDATE=1 brew install "${zsh_tools_homebrew[@]}"
 }
 
 install_zsh_tools_arch() {
 	ensure_paru
-	run paru -S --needed --noconfirm zsh zsh-antidote starship fzf zoxide atuin bat lsd fd ripgrep shellcheck
+	run paru -S --needed --noconfirm "${zsh_tools_arch[@]}"
 }
 
 install_neovim() {
