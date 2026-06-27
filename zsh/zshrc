@@ -43,16 +43,16 @@ alias vim='nvim'
 alias history='history 1'
 alias ~~='~'
 
-if (( $+commands[eza] )); then
-	alias ls='eza --group-directories-first'
-	alias l='eza -lah --group-directories-first'
-	alias ll='eza -lh --group-directories-first'
-	alias la='eza -lAh --group-directories-first'
-elif (( $+commands[lsd] )); then
+if (( $+commands[lsd] )); then
 	alias ls='lsd'
 	alias l='lsd -lah'
 	alias ll='lsd -lh'
 	alias la='lsd -lAh'
+elif (( $+commands[eza] )); then
+	alias ls='eza --group-directories-first'
+	alias l='eza -lah --group-directories-first'
+	alias ll='eza -lh --group-directories-first'
+	alias la='eza -lAh --group-directories-first'
 else
 	alias l='ls -lah'
 	alias ll='ls -lh'

@@ -320,12 +320,12 @@ install_neovim_arch() {
 
 install_zsh_tools_homebrew() {
 	ensure_homebrew
-	run env HOMEBREW_NO_AUTO_UPDATE=1 brew install zsh antidote starship fzf zoxide atuin bat eza fd ripgrep
+	run env HOMEBREW_NO_AUTO_UPDATE=1 brew install zsh antidote starship fzf zoxide atuin bat lsd fd ripgrep
 }
 
 install_zsh_tools_arch() {
 	ensure_paru
-	run paru -S --needed --noconfirm zsh zsh-antidote starship fzf zoxide atuin bat eza fd ripgrep
+	run paru -S --needed --noconfirm zsh zsh-antidote starship fzf zoxide atuin bat lsd fd ripgrep
 }
 
 install_neovim() {
