@@ -3,3 +3,5 @@ nvim/.claude/
 nvim/nvim-pack-lock.json
 nvim/nvim.log
 zsh/local.zsh
+dist/
+cmd/dotfiles/payload/

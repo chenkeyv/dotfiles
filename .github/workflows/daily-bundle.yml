@@ -1,0 +1,75 @@
+name: Daily Bundle
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+
+jobs:
+  bundle:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: ubuntu-22.04
+            goos: linux
+            goarch: amd64
+          - target: darwin-arm64
+            runner: macos-15
+            goos: darwin
+            goarch: arm64
+          - target: darwin-amd64
+            runner: macos-15-intel
+            goos: darwin
+            goarch: amd64
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+
+      - name: Build payload packer
+        run: |
+          mkdir -p dist
+          go build -trimpath -o dist/dotfiles-pack ./cmd/dotfiles
+
+      - name: Set up Rust for source-built tools
+        if: matrix.target == 'darwin-amd64'
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Download portable tools
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/fetch-tools.sh ${{ matrix.target }} dist/tools/${{ matrix.target }}
+
+      - name: Build embedded offline environment bundle
+        run: |
+          ./dist/dotfiles-pack pack \
+            --tools-dir dist/tools/${{ matrix.target }} \
+            -o cmd/dotfiles/payload
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build \
+            -tags embedded \
+            -trimpath \
+            -o dist/dotfiles-env-${{ matrix.target }} \
+            ./cmd/dotfiles
+          ./dist/dotfiles-env-${{ matrix.target }} list
+          ./dist/dotfiles-env-${{ matrix.target }} tool list
+          ./dist/dotfiles-env-${{ matrix.target }} tool nvim --version
+
+      - name: Upload bundle artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotfiles-env-${{ matrix.target }}
+          path: |
+            dist/dotfiles-env-${{ matrix.target }}
