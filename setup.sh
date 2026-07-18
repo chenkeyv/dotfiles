@@ -5,12 +5,13 @@ usage() {
 	cat <<'EOF'
 Usage: ./setup.sh [--dry-run] [--copy] [--force]
                   [--skip-neovim-install] [--skip-zsh-install]
+                  [--skip-python-install]
                   [--skip-agent-toolbox-install]
 
 Installs the currently maintained dotfiles.
 
-By default this installs Neovim HEAD/nightly, Zsh tooling, Agent Toolbox for
-Codex, and links:
+By default this installs Neovim HEAD/nightly, Zsh tooling, uv with a
+user-level Python, Agent Toolbox for Codex, and links:
   ~/.config/nvim       -> <repo>/nvim
   ~/.zshenv            -> <repo>/zsh/zshenv
   ~/.zprofile          -> <repo>/zsh/zprofile
@@ -32,11 +33,12 @@ Options:
   --force                Replace existing targets without prompting.
   --skip-neovim-install  Only install/link configs; do not install or update Neovim.
   --skip-zsh-install     Only install/link configs; do not install or update Zsh tooling.
+  --skip-python-install  Do not install uv or the uv-managed user-level Python.
   --skip-agent-toolbox-install
                          Do not install or update the Agent Toolbox Codex plugin.
   -h, --help             Show this help.
 
-Only Neovim, Zsh, Starship, ShellCheck, and Agent Toolbox are installed.
+Only Neovim, Zsh, Starship, ShellCheck, uv, user-level Python, and Agent Toolbox are installed.
 EOF
 }
 
@@ -45,6 +47,7 @@ copy_mode=0
 force=0
 skip_neovim_install=0
 skip_zsh_install=0
+skip_python_install=0
 skip_agent_toolbox_install=0
 
 while [ "$#" -gt 0 ]; do
@@ -63,6 +66,9 @@ while [ "$#" -gt 0 ]; do
 			;;
 		--skip-zsh-install)
 			skip_zsh_install=1
+			;;
+		--skip-python-install)
+			skip_python_install=1
 			;;
 		--skip-agent-toolbox-install)
 			skip_agent_toolbox_install=1
@@ -95,6 +101,7 @@ source_starship="${script_dir}/starship/starship.toml"
 agent_toolbox_marketplace="agent-toolbox"
 agent_toolbox_source="chenkeyv/agent-toolbox"
 agent_toolbox_selector="${agent_toolbox_marketplace}@${agent_toolbox_marketplace}"
+user_python_version="3.14"
 zsh_tools_homebrew=(zsh antidote starship fzf zoxide atuin bat lsd fd ripgrep shellcheck)
 zsh_tools_arch=(zsh zsh-antidote starship fzf zoxide atuin bat lsd fd ripgrep shellcheck)
 
@@ -397,6 +404,66 @@ install_zsh_tools() {
 	esac
 }
 
+install_uv() {
+	case "$(uname -s)" in
+		Darwin)
+			ensure_homebrew
+			run env HOMEBREW_NO_AUTO_UPDATE=1 brew install uv
+			;;
+		Linux)
+			if is_arch_linux; then
+				ensure_paru
+				run paru -S --needed --noconfirm uv
+			else
+				ensure_homebrew
+				run env HOMEBREW_NO_AUTO_UPDATE=1 brew install uv
+			fi
+			;;
+		*)
+			echo "Unsupported OS: $(uname -s). Install uv manually, then rerun this script." >&2
+			exit 1
+			;;
+	esac
+}
+
+has_user_python() {
+	local managed_python python_bin_dir executable
+
+	managed_python="$(
+		uv python find --managed-python --no-python-downloads --no-project \
+			"$user_python_version" 2>/dev/null
+	)" || return 1
+	python_bin_dir="$(uv python dir --bin 2>/dev/null)" || return 1
+
+	for executable in python python3 "python${user_python_version}"; do
+		if [ ! -L "${python_bin_dir}/${executable}" ] ||
+			[ "$(readlink "${python_bin_dir}/${executable}")" != "$managed_python" ]
+		then
+			return 1
+		fi
+	done
+
+	echo "uv-managed Python ${user_python_version} already installed as the user default."
+}
+
+install_user_python() {
+	install_uv
+
+	if [ "$dry_run" -eq 0 ]; then
+		hash -r
+		if ! command -v uv >/dev/null 2>&1; then
+			echo "uv was installed, but it is still not available in PATH." >&2
+			exit 1
+		fi
+
+		if has_user_python; then
+			return
+		fi
+	fi
+
+	run uv python install "$user_python_version" --default
+}
+
 has_agent_toolbox_marketplace() {
 	codex plugin marketplace list 2>/dev/null |
 		awk -v name="$agent_toolbox_marketplace" \
@@ -456,6 +523,10 @@ fi
 
 if [ "$skip_zsh_install" -eq 0 ]; then
 	install_zsh_tools
+fi
+
+if [ "$skip_python_install" -eq 0 ]; then
+	install_user_python
 fi
 
 if [ "$skip_agent_toolbox_install" -eq 0 ]; then

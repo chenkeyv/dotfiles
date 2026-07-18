@@ -12,21 +12,24 @@ Configurations of my daily utils.
 
 ## Setup
 
-This repo currently maintains Neovim and Zsh configs, plus Agent Toolbox setup for Codex.
+This repo currently maintains Neovim and Zsh configs, uv-managed user-level Python, plus Agent
+Toolbox setup for Codex.
 
 ```sh
 ./setup.sh
 ```
 
-The script installs Neovim nightly, Zsh tooling, Agent Toolbox for Codex, and
-backs up existing config files before replacing them with links to this repo.
-It is safe to rerun; existing links and installed Agent Toolbox plugins are
-detected and skipped.
+The script installs Neovim nightly, Zsh tooling, uv with Python 3.14 as the user-level default,
+Agent Toolbox for Codex, and backs up existing config files before replacing them with links to
+this repo. It is safe to rerun; existing links, uv-managed Python, and installed Agent Toolbox
+plugins are detected and skipped.
 
 - Arch Linux: bootstraps `paru` when needed, then installs `neovim-git`.
 - macOS and other Linux distributions: uses Homebrew to install Neovim HEAD.
 - Zsh: uses Starship for the prompt, Antidote for plugin management, and F-Sy-H for syntax
   highlighting.
+- Python: installs uv through Homebrew or `paru`, then exposes uv-managed Python 3.14 as `python`
+  and `python3` through `~/.local/bin`. The operating system Python remains unchanged.
 - Shell scripts: installs ShellCheck for local validation.
 - Agent Toolbox: uses `codex plugin marketplace add chenkeyv/agent-toolbox --ref main`, then installs
   `agent-toolbox@agent-toolbox`.
@@ -76,7 +79,14 @@ Preview changes without writing:
 Install only the config links and skip install/update work:
 
 ```sh
-./setup.sh --skip-neovim-install --skip-zsh-install --skip-agent-toolbox-install
+./setup.sh --skip-neovim-install --skip-zsh-install --skip-python-install \
+  --skip-agent-toolbox-install
+```
+
+Skip uv and user-level Python installation:
+
+```sh
+./setup.sh --skip-python-install
 ```
 
 Skip Agent Toolbox installation:
