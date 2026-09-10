@@ -1,3 +1,6 @@
+-- Kanagawa's compiler does not create missing parent directories.
+vim.fs.mkdir(vim.fn.stdpath("state"), { parents = true })
+
 require("kanagawa").setup({
 	compile = true, -- enable compiling the colorscheme
 	transparent = true, -- do not set background color

@@ -31,14 +31,14 @@ require("gitsigns").setup({
 			if type(opts) == "string" then
 				opts = { desc = opts }
 			end
-			opts.buffer = bufnr
+			opts.buf = bufnr
 			vim.keymap.set(mode, l, r, opts)
 		end
 
 		-- Navigation
 		map("n", "]h", function()
 			if vim.wo.diff then
-				return "]h"
+				return "]c"
 			end
 			vim.schedule(function()
 				gs.nav_hunk("next")
@@ -48,7 +48,7 @@ require("gitsigns").setup({
 
 		map("n", "[h", function()
 			if vim.wo.diff then
-				return "[h"
+				return "[c"
 			end
 			vim.schedule(function()
 				gs.nav_hunk("prev")
