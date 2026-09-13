@@ -16,8 +16,8 @@ Usage: ./setup.sh [--dry-run] [--copy] [--force]
 
 Installs the currently maintained dotfiles.
 
-By default this installs Neovim HEAD/nightly, Zsh tooling, uv with a
-user-level Python, Node.js with pnpm, the SkillHub CLI, and links:
+By default this first links the configs below, then installs Neovim HEAD/nightly,
+Zsh tooling, uv with a user-level Python, Node.js with pnpm, and the SkillHub CLI:
   ~/.config/nvim       -> <repo>/nvim
   ~/.zshenv            -> <repo>/zsh/zshenv
   ~/.zprofile          -> <repo>/zsh/zprofile
@@ -1049,6 +1049,13 @@ install_configs() {
 	link_file "$source_ghostty" "$target_ghostty" "ghostty-config"
 }
 
+# Keep startup files in place even if a later tool or plugin install fails.
+install_configs
+
+if [ "$dry_run" -eq 0 ]; then
+	echo "Dotfile configs installed. Once Zsh is available, load them with: exec zsh -l"
+fi
+
 if [ "$skip_neovim_install" -eq 0 ]; then
 	install_neovim
 fi
@@ -1077,10 +1084,9 @@ if [ "$skip_plugin_install" -eq 0 ]; then
 	install_configured_plugins
 fi
 
-install_configs
-
 if [ "$dry_run" -eq 1 ]; then
 	echo "Dry run complete. No files were changed."
 else
 	echo "Dotfiles installed."
+	echo "Load the Zsh configuration in this terminal with: exec zsh -l"
 fi

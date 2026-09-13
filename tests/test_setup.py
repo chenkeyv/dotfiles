@@ -100,6 +100,66 @@ class SetupTests(unittest.TestCase):
             text=True,
         )
 
+    def test_zsh_configs_survive_plugin_failure_and_rerun(self) -> None:
+        config_home = self.temp_path / "custom config"
+        zsh_dir = config_home / "zsh"
+        zsh_dir.mkdir(parents=True)
+        local_config = zsh_dir / "local.zsh"
+        local_config.write_text("export LOCAL_SETTING=preserved\n", encoding="utf-8")
+        original_rc = "# Existing Zsh config\n"
+        (self.home / ".zshrc").write_text(original_rc, encoding="utf-8")
+        fake_bin = self.temp_path / "bin"
+        self.write_executable(
+            fake_bin,
+            "codex",
+            'if [ "$1 $2" = "plugin list" ]; then\n'
+            '  printf \'%s\\n\' \'{"installed":[]}\'\n'
+            "  exit 0\n"
+            "fi\n"
+            "echo 'Simulated plugin installation failure' >&2\n"
+            "exit 23\n",
+        )
+        packages = self.write_packages(plugins=["example@personal"])
+        env = {
+            "XDG_CONFIG_HOME": str(config_home),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        }
+
+        failed = self.run_setup(
+            packages, dry_run=False, force=True, skip_skills=True, env_updates=env
+        )
+
+        self.assertEqual(failed.returncode, 23, failed.stderr)
+        self.assertIn("Simulated plugin installation failure", failed.stderr)
+        self.assertIn("exec zsh -l", failed.stdout)
+        self.assertNotIn("Dotfiles installed.", failed.stdout)
+        for name in ("zshenv", "zprofile", "zshrc"):
+            for directory in (self.home, zsh_dir):
+                target = directory / f".{name}"
+                self.assertTrue(target.is_symlink(), str(target))
+                self.assertEqual(target.resolve(), ROOT / "zsh" / name)
+        for name in ("plugins.txt", "plugins-late.txt"):
+            self.assertEqual((zsh_dir / name).resolve(), ROOT / "zsh" / name)
+        self.assertEqual(
+            (config_home / "starship.toml").resolve(), ROOT / "starship" / "starship.toml"
+        )
+        backups = list((config_home / "dotfiles-backups").glob("zshrc.home.*"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_text(encoding="utf-8"), original_rc)
+
+        repeated = self.run_setup(
+            packages, dry_run=False, skip_skills=True, skip_plugins=True, env_updates=env
+        )
+
+        self.assertEqual(repeated.returncode, 0, repeated.stderr)
+        self.assertIn("Dotfiles installed.", repeated.stdout)
+        self.assertEqual(
+            list((config_home / "dotfiles-backups").glob("zshrc.home.*")), backups
+        )
+        self.assertEqual(
+            local_config.read_text(encoding="utf-8"), "export LOCAL_SETTING=preserved\n"
+        )
+
     def test_ghostty_config_backup_dry_run_and_idempotency(self) -> None:
         config_home = self.temp_path / "custom config"
         target = config_home / "ghostty" / "config"

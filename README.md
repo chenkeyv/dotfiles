@@ -21,10 +21,22 @@ pnpm, SkillHub CLI setup, and declarative Codex plugin and skill lists.
 ./setup.sh
 ```
 
-The script installs Neovim nightly, Zsh tooling, uv with Python 3.14 as the user-level default,
-Node.js with pnpm for JavaScript dependencies, the SkillHub CLI, the plugins and skills declared in
-`codex-packages.json`, and backs up existing config files before replacing them with links to this
-repo. It is safe to rerun; existing links, plugins, skills, and tools are detected and skipped.
+The script first backs up existing config files and replaces them with links to this repo. It then
+installs Neovim nightly, Zsh tooling, uv with Python 3.14 as the user-level default, Node.js with pnpm
+for JavaScript dependencies, the SkillHub CLI, and the plugins and skills declared in
+`codex-packages.json`. Config links remain installed if a later installation fails; fix the reported
+error and rerun to finish installing tools. It is safe to rerun; existing links, plugins, skills, and
+tools are detected and skipped.
+
+After setup, load the configuration in the current terminal:
+
+```sh
+exec zsh -l
+```
+
+Setup leaves the current shell process and your default login shell unchanged. If new terminals
+still open Bash or another shell, configure your terminal or account to launch Zsh. Starship and
+Antidote must be installed successfully for the prompt and plugins to appear.
 
 - Arch Linux: bootstraps `paru` when needed, then installs `neovim-git`.
 - macOS and other Linux distributions: uses Homebrew to install Neovim HEAD.
