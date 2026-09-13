@@ -21,11 +21,6 @@
   ],
   "skills": [
     {
-      "name": "agent-reach",
-      "installer": "uv-tool",
-      "revision": "93ae1d18c37b707dec053c7c4f9d91cd8ef8943d"
-    },
-    {
       "name": "surge",
       "installer": "app"
     }

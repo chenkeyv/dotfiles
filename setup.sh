@@ -36,9 +36,6 @@ When Surge's bundled agent skill is selected in codex-packages.json and is
 available on macOS, this also links:
   ~/.codex/skills/surge -> /Applications/Surge.app/Contents/Resources/Skills/surge
 
-When Agent Reach is selected, setup also reapplies the repository patch that
-limits its automatic skill routing to Xiaohongshu access.
-
 On Arch Linux, this bootstraps paru when needed and installs neovim-git.
 On macOS and other Linux distributions, this installs Homebrew when needed and
 uses it to install Neovim HEAD.
@@ -171,7 +168,6 @@ source_zsh_plugins_late="${script_dir}/zsh/plugins-late.txt"
 source_starship="${script_dir}/starship/starship.toml"
 source_ghostty="${script_dir}/ghostty/config"
 source_surge_skill="${DOTFILES_SURGE_SKILL_SOURCE:-/Applications/Surge.app/Contents/Resources/Skills/surge}"
-source_agent_reach_patch="${script_dir}/patches/agent-reach-xiaohongshu-only.patch"
 source_personal_marketplace_helper="${script_dir}/scripts/ensure-personal-codex-marketplace.py"
 agent_toolbox_name="agent-toolbox"
 agent_toolbox_marketplace="personal"
@@ -688,9 +684,6 @@ configured_skill_name() {
 		skillhub:*)
 			skillhub_ref_name "${skill#skillhub:}"
 			;;
-		uv-tool:agent-reach@*)
-			printf '%s\n' "agent-reach"
-			;;
 		app:* | local:*)
 			printf '%s\n' "${skill#*:}"
 			;;
@@ -798,11 +791,6 @@ elif key == "skills":
         if installer == "skillhub":
             reference = token(entry.get("reference", name), "reference")
             print(f"skillhub:{reference}")
-        elif installer == "uv-tool":
-            if name != "agent-reach":
-                raise SystemExit(f"Unsupported uv-tool skill: {name}")
-            revision = token(entry.get("revision"), "revision")
-            print(f"uv-tool:{name}@{revision}")
         elif installer == "app":
             if name != "surge":
                 raise SystemExit(f"Unsupported app skill: {name}")
@@ -848,169 +836,6 @@ install_skillhub_ref() {
 	run "$executable" --skip-self-upgrade install "$skill_ref" --dir "$target_agent_skills"
 }
 
-find_agent_reach_cli() {
-	local tool_bin_dir
-
-	if command -v uv >/dev/null 2>&1; then
-		tool_bin_dir="$(uv tool dir --bin 2>/dev/null)" || true
-		if [ -n "$tool_bin_dir" ] && [ -x "${tool_bin_dir}/agent-reach" ]; then
-			printf '%s\n' "${tool_bin_dir}/agent-reach"
-			return
-		fi
-	fi
-
-	if command -v agent-reach >/dev/null 2>&1; then
-		command -v agent-reach
-		return
-	fi
-
-	return 1
-}
-
-has_agent_reach_revision() {
-	local revision="$1"
-	local python_executable tool_dir
-
-	find_agent_reach_cli >/dev/null || return 1
-	command -v uv >/dev/null 2>&1 || return 1
-	python_executable="$(find_python3)" || return 1
-	tool_dir="$(uv tool dir 2>/dev/null)" || return 1
-
-	"$python_executable" - "$tool_dir" "$revision" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-tool_dir = Path(sys.argv[1]) / "agent-reach"
-expected_revision = sys.argv[2]
-
-for direct_url in tool_dir.glob(
-    "lib/python*/site-packages/agent_reach-*.dist-info/direct_url.json"
-):
-    try:
-        data = json.loads(direct_url.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        continue
-    vcs_info = data.get("vcs_info")
-    if isinstance(vcs_info, dict) and vcs_info.get("commit_id") == expected_revision:
-        raise SystemExit(0)
-
-raise SystemExit(1)
-PY
-}
-
-has_agent_reach_skill() {
-	[ -f "${target_agent_skills}/agent-reach/SKILL.md" ] ||
-		[ -f "${target_legacy_codex_skills}/agent-reach/SKILL.md" ]
-}
-
-install_agent_reach_skill() {
-	local revision="$1"
-	local executable source tool_bin_dir
-	local refresh_skill=0
-
-	if [ -z "$revision" ]; then
-		echo "Agent Reach skill entry requires a Git revision." >&2
-		exit 2
-	fi
-
-	if has_agent_reach_revision "$revision"; then
-		echo "Agent Reach tool already installed at configured revision: $revision"
-	else
-		if ! command -v uv >/dev/null 2>&1 && [ "$dry_run" -eq 0 ]; then
-			echo "uv is required to install the Agent Reach skill." >&2
-			exit 1
-		fi
-		source="git+https://github.com/Panniantong/Agent-Reach.git@${revision}"
-		run uv tool install --force --from "$source" agent-reach
-		refresh_skill=1
-	fi
-
-	if [ "$dry_run" -eq 0 ]; then
-		hash -r
-		executable="$(find_agent_reach_cli)" || {
-			echo "Agent Reach was installed, but its executable was not found." >&2
-			exit 1
-		}
-	else
-		executable="$(find_agent_reach_cli)" || true
-		if [ -z "$executable" ]; then
-			tool_bin_dir="$(uv tool dir --bin 2>/dev/null)" || true
-			executable="${tool_bin_dir:-${HOME}/.local/bin}/agent-reach"
-		fi
-	fi
-
-	if [ "$refresh_skill" -eq 1 ] || ! has_agent_reach_skill; then
-		run "$executable" skill --install
-	fi
-}
-
-agent_reach_patch_applies() {
-	local direction="$1"
-	local target_dir="$2"
-	local -a patch_args=(-t -s -p 1 -d "$target_dir" -i "$source_agent_reach_patch")
-
-	if [ "$direction" = "reverse" ]; then
-		patch_args=(-R "${patch_args[@]}")
-	else
-		patch_args=(-N "${patch_args[@]}")
-	fi
-
-	if patch --help 2>&1 | grep -q -- '--dry-run'; then
-		patch --dry-run "${patch_args[@]}" >/dev/null 2>&1
-	else
-		patch -C "${patch_args[@]}" >/dev/null 2>&1
-	fi
-}
-
-apply_agent_reach_patch_to_dir() {
-	local target_dir="$1"
-
-	if agent_reach_patch_applies forward "$target_dir"; then
-		echo "Applying Agent Reach Xiaohongshu-only patch: $target_dir"
-		run patch -N -t -p 1 -d "$target_dir" -i "$source_agent_reach_patch"
-	elif agent_reach_patch_applies reverse "$target_dir"; then
-		echo "Agent Reach Xiaohongshu-only patch already applied: $target_dir"
-	else
-		echo "Agent Reach patch does not match the installed skill: $target_dir" >&2
-		echo "Update patches/agent-reach-xiaohongshu-only.patch for the configured revision." >&2
-		exit 1
-	fi
-}
-
-apply_agent_reach_patch() {
-	local found=0
-	local target_dir
-
-	ensure_source "$source_agent_reach_patch"
-	if ! command -v patch >/dev/null 2>&1; then
-		echo "The patch command is required to customize the Agent Reach skill." >&2
-		exit 1
-	fi
-
-	for target_dir in \
-		"${target_agent_skills}/agent-reach" \
-		"${target_legacy_codex_skills}/agent-reach"
-	do
-		if [ -d "$target_dir" ]; then
-			found=1
-			apply_agent_reach_patch_to_dir "$target_dir"
-		fi
-	done
-
-	if [ "$found" -eq 0 ]; then
-		if [ "$dry_run" -eq 1 ]; then
-			echo "Agent Reach would be patched after installation."
-			run patch -N -t -p 1 -d "${target_agent_skills}/agent-reach" \
-				-i "$source_agent_reach_patch"
-			return
-		fi
-
-		echo "Agent Reach skill directory was not created by its installer." >&2
-		exit 1
-	fi
-}
-
 install_configured_skills() {
 	local skill skill_name
 
@@ -1022,10 +847,6 @@ install_configured_skills() {
 	for skill in "${requested_skills[@]}"; do
 		skill_name="$(configured_skill_name "$skill")"
 		case "$skill" in
-			uv-tool:agent-reach@*)
-				install_agent_reach_skill "${skill#uv-tool:agent-reach@}"
-				apply_agent_reach_patch
-				;;
 			app:surge)
 				install_surge_skill
 				;;

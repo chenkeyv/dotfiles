@@ -44,13 +44,8 @@ repo. It is safe to rerun; existing links, plugins, skills, and tools are detect
   runtime marketplaces are supplied by Codex. For Agent Toolbox, setup preserves unrelated entries
   in `~/.agents/plugins/marketplace.json` and adds a Git-backed entry to the personal marketplace.
 - Standalone skills: the `skills` array records each skill's name, installer, and any required
-  revision or reference. Local-only entries are inventoried but cannot be recreated when their
+  reference. Local-only entries are inventoried but cannot be recreated when their
   source directory is absent.
-- Agent Reach: verifies the uv tool's installed Git commit, reinstalls the pinned upstream revision
-  when needed, registers its skill non-interactively, then reapplies
-  `patches/agent-reach-xiaohongshu-only.patch` so only explicit Xiaohongshu access triggers the
-  skill. Setup stops instead of forcing the patch if a future upstream revision no longer matches
-  it.
 - Shell scripts: installs ShellCheck for local validation.
 - Surge: when selected and `/Applications/Surge.app/Contents/Resources/Skills/surge` is available,
   links it to
@@ -142,11 +137,6 @@ Choose the Codex plugins and standalone skills installed by normal setup in the 
       "reference": "@example-team/example-skill"
     },
     {
-      "name": "agent-reach",
-      "installer": "uv-tool",
-      "revision": "GIT_REVISION"
-    },
-    {
       "name": "surge",
       "installer": "app"
     }
@@ -155,9 +145,8 @@ Choose the Codex plugins and standalone skills installed by normal setup in the 
 ```
 
 The schema version is currently `1`. Plugin entries use `PLUGIN@MARKETPLACE`. Skill installers are
-`skillhub`, the pinned `uv-tool` form used for Agent Reach, `app` for Surge, and `local` for an
-inventory-only skill already available on a machine. A string skill entry is shorthand for a
-SkillHub reference.
+`skillhub`, `app` for Surge, and `local` for an inventory-only skill already available on a machine.
+A string skill entry is shorthand for a SkillHub reference.
 
 Use `--packages-file` to select a different JSON file. You can also add entries for one setup run by
 repeating `--skill` or `--plugin`:
@@ -168,9 +157,9 @@ repeating `--skill` or `--plugin`:
 ```
 
 Setup skips valid SkillHub skills already present in `~/.agents/skills`, the legacy
-`$CODEX_HOME/skills` directory, or SkillHub's install record. Agent Reach is checked against its
-declared Git revision, and Surge is checked against the authoritative application-bundle symlink.
-The checked-in JSON reflects the plugins and standalone skills currently enabled on this machine.
+`$CODEX_HOME/skills` directory, or SkillHub's install record. Surge is checked against the
+authoritative application-bundle symlink.
+The checked-in JSON declares the plugins and standalone skills managed by setup.
 To skip either category for one setup run:
 
 ```sh
@@ -193,7 +182,6 @@ bash -n setup.sh
 bash -n scripts/fetch-tools.sh
 shellcheck setup.sh scripts/fetch-tools.sh
 python3 -m json.tool codex-packages.json >/dev/null
-git apply --numstat patches/agent-reach-xiaohongshu-only.patch >/dev/null
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
 go test ./...
 CGO_ENABLED=0 go build -trimpath -o /tmp/dotfiles ./cmd/dotfiles

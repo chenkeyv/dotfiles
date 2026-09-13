@@ -308,64 +308,6 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("Python 3 is required", result.stderr)
 
-    def test_agent_reach_reinstalls_an_unpinned_existing_tool(self) -> None:
-        fake_bin = self.temp_path / "agent-bin"
-        tool_dir = self.temp_path / "uv-tools"
-        direct_url = (
-            tool_dir
-            / "agent-reach"
-            / "lib"
-            / "python3.14"
-            / "site-packages"
-            / "agent_reach-1.5.0.dist-info"
-            / "direct_url.json"
-        )
-        direct_url.parent.mkdir(parents=True)
-        direct_url.write_text(
-            json.dumps({"vcs_info": {"commit_id": "old-revision"}}),
-            encoding="utf-8",
-        )
-        self.write_executable(fake_bin, "agent-reach", "exit 0\n")
-        self.write_executable(
-            fake_bin,
-            "uv",
-            "if [ \"$1 $2 $3\" = \"tool dir --bin\" ]; then\n"
-            "  printf '%s\\n' \"$FAKE_TOOL_BIN\"\n"
-            "  exit 0\n"
-            "fi\n"
-            "if [ \"$1 $2\" = \"tool dir\" ]; then\n"
-            "  printf '%s\\n' \"$FAKE_TOOL_DIR\"\n"
-            "  exit 0\n"
-            "fi\n"
-            "exit 1\n",
-        )
-        revision = "0123456789abcdef0123456789abcdef01234567"
-        packages = self.write_packages(
-            skills=[
-                {
-                    "name": "agent-reach",
-                    "installer": "uv-tool",
-                    "revision": revision,
-                }
-            ]
-        )
-
-        result = self.run_setup(
-            packages,
-            skip_plugins=True,
-            env_updates={
-                "PATH": f"{fake_bin}:{os.environ['PATH']}",
-                "FAKE_TOOL_BIN": str(fake_bin),
-                "FAKE_TOOL_DIR": str(tool_dir),
-            },
-        )
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("uv tool install --force --from", result.stdout)
-        self.assertIn(f"Agent-Reach.git@{revision}", result.stdout)
-        self.assertIn("agent-reach skill --install", result.stdout)
-        self.assertNotIn("agent-reach setup", result.stdout)
-
     def test_surge_repairs_an_existing_wrong_directory(self) -> None:
         source = self.temp_path / "SurgeSkill"
         source.mkdir()

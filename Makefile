@@ -5,7 +5,6 @@ validate:
 	bash -n scripts/fetch-tools.sh
 	shellcheck setup.sh scripts/fetch-tools.sh
 	python3 -m json.tool codex-packages.json >/dev/null
-	git apply --numstat patches/agent-reach-xiaohongshu-only.patch >/dev/null
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
 	go test ./...
 	CGO_ENABLED=0 go build -trimpath -o /tmp/dotfiles ./cmd/dotfiles
