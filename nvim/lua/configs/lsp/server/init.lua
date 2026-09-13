@@ -25,8 +25,8 @@ vim.lsp.enable({
 	"ruff",
 	"rust_analyzer",
 	"sourcekit",
-	"taplo",
-	"tsgo",
+	"tombi",
+	"tsc",
 	"ty",
 	"yamlls",
 })
