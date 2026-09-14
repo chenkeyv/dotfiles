@@ -56,6 +56,7 @@ class SetupTests(unittest.TestCase):
         *,
         skip_skills: bool = False,
         skip_plugins: bool = False,
+        skip_font: bool = True,
         dry_run: bool = True,
         force: bool = False,
         env_updates: dict[str, str] | None = None,
@@ -79,6 +80,8 @@ class SetupTests(unittest.TestCase):
             args.append("--skip-skill-install")
         if skip_plugins:
             args.append("--skip-plugin-install")
+        if skip_font:
+            args.append("--skip-font-install")
 
         env = os.environ.copy()
         env.update(
@@ -197,6 +200,65 @@ class SetupTests(unittest.TestCase):
         )
         self.assertEqual(sibling.read_text(encoding="utf-8"), "background = #112233\n")
         self.assertFalse((self.home / ".config" / "ghostty").exists())
+
+    def test_font_install_dry_run_skip_and_idempotency(self) -> None:
+        fake_bin = self.temp_path / "bin"
+        installed = self.temp_path / "font-installed"
+        installs = self.temp_path / "font-installs"
+        self.write_executable(fake_bin, "uname", 'echo "$FAKE_OS"\n')
+        package_manager = (
+            'case "$*" in\n'
+            '  "list --cask --versions font-maple-mono-nf" | "-Q maplemono-nf-unhinted")\n'
+            '    test -f "$FONT_INSTALLED" ;;\n'
+            '  "install --cask font-maple-mono-nf" | "-S --needed --noconfirm maplemono-nf-unhinted")\n'
+            '    touch "$FONT_INSTALLED"\n'
+            '    echo installed >> "$FONT_INSTALLS" ;;\n'
+            '  *) echo "Unexpected package command: $*" >&2; exit 99 ;;\n'
+            "esac\n"
+        )
+        for command in ("brew", "pacman", "paru"):
+            self.write_executable(fake_bin, command, package_manager)
+        packages = self.write_packages()
+        for platform in ("Darwin", "Linux"):
+            with self.subTest(platform=platform):
+                installed.unlink(missing_ok=True)
+                installs.unlink(missing_ok=True)
+                options = {
+                    "skip_skills": True,
+                    "skip_plugins": True,
+                    "env_updates": {
+                        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                        "FAKE_OS": platform,
+                        "FONT_INSTALLED": str(installed),
+                        "FONT_INSTALLS": str(installs),
+                    },
+                }
+
+                skipped = self.run_setup(packages, dry_run=False, **options)
+                self.assertEqual(skipped.returncode, 0, skipped.stderr)
+                self.assertFalse(installed.exists())
+
+                preview = self.run_setup(packages, skip_font=False, **options)
+                self.assertEqual(preview.returncode, 0, preview.stderr)
+                self.assertTrue(
+                    "brew install --cask font-maple-mono-nf" in preview.stdout
+                    or "paru -S --needed --noconfirm maplemono-nf-unhinted" in preview.stdout,
+                    preview.stdout,
+                )
+                self.assertFalse(installed.exists())
+
+                first = self.run_setup(
+                    packages, skip_font=False, dry_run=False, **options
+                )
+                self.assertEqual(first.returncode, 0, first.stderr)
+                self.assertTrue(installed.exists())
+
+                repeated = self.run_setup(
+                    packages, skip_font=False, dry_run=False, **options
+                )
+                self.assertEqual(repeated.returncode, 0, repeated.stderr)
+                self.assertIn("Maple Mono NF is already installed.", repeated.stdout)
+                self.assertEqual(installs.read_text(encoding="utf-8"), "installed\n")
 
     def configure_personal_marketplace(self) -> Path:
         marketplace = self.home / ".agents" / "plugins" / "marketplace.json"

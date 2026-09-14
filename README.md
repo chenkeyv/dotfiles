@@ -23,8 +23,8 @@ pnpm, SkillHub CLI setup, and declarative Codex plugin and skill lists.
 
 The script first backs up existing config files and replaces them with links to this repo. It then
 installs Neovim nightly, Zsh tooling, uv with Python 3.14 as the user-level default, Node.js with pnpm
-for JavaScript dependencies, the SkillHub CLI, and the plugins and skills declared in
-`codex-packages.json`. Config links remain installed if a later installation fails; fix the reported
+for JavaScript dependencies, the SkillHub CLI, the Maple Mono NF font, and the plugins and skills
+declared in `codex-packages.json`. Config links remain installed if a later installation fails; fix the reported
 error and rerun to finish installing tools. It is safe to rerun; existing links, plugins, skills, and
 tools are detected and skipped.
 
@@ -43,7 +43,9 @@ Antidote must be installed successfully for the prompt and plugins to appear.
 - Zsh: uses Starship for the prompt, Antidote for plugin management, and F-Sy-H for syntax
   highlighting.
 - Ghostty: links `ghostty/config` to `${XDG_CONFIG_HOME:-~/.config}/ghostty/config`, backing up an
-  existing config before replacing it. Install Ghostty 1.3+ and the Maple Mono NF font separately.
+  existing config before replacing it. Installs the configured Maple Mono NF font through Homebrew
+  (`font-maple-mono-nf`) on macOS and other Linux distributions, or `paru`
+  (`maplemono-nf-unhinted`) on Arch Linux. Install Ghostty 1.3+ separately.
   The config uses a transparent background, command-finished notifications, and a bottom Quick
   Terminal opened with `Alt+Space` on the display under the mouse pointer.
 - Python: installs uv through Homebrew or `paru`, then exposes uv-managed Python 3.14 as `python`
@@ -112,7 +114,7 @@ Install only the config links and skip install/update work:
 ```sh
 ./setup.sh --skip-neovim-install --skip-zsh-install --skip-python-install \
   --skip-node-install --skip-skillhub-install --skip-skill-install \
-  --skip-plugin-install
+  --skip-plugin-install --skip-font-install
 ```
 
 Skip uv and user-level Python installation:
@@ -131,6 +133,12 @@ Skip SkillHub CLI installation:
 
 ```sh
 ./setup.sh --skip-skillhub-install
+```
+
+Skip Maple Mono NF font installation:
+
+```sh
+./setup.sh --skip-font-install
 ```
 
 Choose the Codex plugins and standalone skills installed by normal setup in the single

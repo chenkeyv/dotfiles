@@ -6,7 +6,7 @@ usage() {
 Usage: ./setup.sh [--dry-run] [--copy] [--force]
                   [--skip-neovim-install] [--skip-zsh-install]
                   [--skip-python-install] [--skip-node-install]
-                  [--skip-skillhub-install]
+                  [--skip-skillhub-install] [--skip-font-install]
                   [--packages-file <path>]
                   [--skill <skill>]
                   [--skip-skill-install]
@@ -17,7 +17,8 @@ Usage: ./setup.sh [--dry-run] [--copy] [--force]
 Installs the currently maintained dotfiles.
 
 By default this first links the configs below, then installs Neovim HEAD/nightly,
-Zsh tooling, uv with a user-level Python, Node.js with pnpm, and the SkillHub CLI:
+Zsh tooling, uv with a user-level Python, Node.js with pnpm, the SkillHub CLI,
+and the configured Maple Mono NF font:
   ~/.config/nvim       -> <repo>/nvim
   ~/.zshenv            -> <repo>/zsh/zshenv
   ~/.zprofile          -> <repo>/zsh/zprofile
@@ -30,7 +31,7 @@ Zsh tooling, uv with a user-level Python, Node.js with pnpm, and the SkillHub CL
   ~/.config/starship.toml -> <repo>/starship/starship.toml
   ~/.config/ghostty/config -> <repo>/ghostty/config
 
-Ghostty and its configured Maple Mono NF font must be installed separately.
+Ghostty must be installed separately.
 
 When Surge's bundled agent skill is selected in codex-packages.json and is
 available on macOS, this also links:
@@ -50,6 +51,7 @@ Options:
   --skip-node-install    Do not install Node.js or pnpm.
   --skip-skillhub-install
                          Do not install the SkillHub CLI.
+  --skip-font-install    Do not install the Maple Mono NF font used by Ghostty.
   --packages-file <path> Read plugins and skills from this JSON file instead of
                          <repo>/codex-packages.json.
   --skill <skill>        Install a configured skill into Codex. Repeat as needed.
@@ -61,8 +63,8 @@ Options:
   -h, --help             Show this help.
 
 Only Neovim, Zsh, Starship, ShellCheck, uv, user-level Python, Node.js, pnpm,
-the SkillHub CLI, configured skills, configured Codex plugins, and the bundled
-Surge skill when selected are installed by default.
+the SkillHub CLI, Maple Mono NF, configured skills, configured Codex plugins,
+and the bundled Surge skill when selected are installed by default.
 EOF
 }
 
@@ -74,6 +76,7 @@ skip_zsh_install=0
 skip_python_install=0
 skip_node_install=0
 skip_skillhub_install=0
+skip_font_install=0
 skip_skill_install=0
 skip_plugin_install=0
 install_agent_toolbox_requested=0
@@ -106,6 +109,9 @@ while [ "$#" -gt 0 ]; do
 			;;
 		--skip-skillhub-install)
 			skip_skillhub_install=1
+			;;
+		--skip-font-install)
+			skip_font_install=1
 			;;
 		--packages-file)
 			if [ "$#" -lt 2 ] || [ -z "$2" ]; then
@@ -179,6 +185,9 @@ zsh_tools_homebrew=(zsh antidote starship fzf zoxide atuin bat lsd fd ripgrep sh
 zsh_tools_arch=(zsh zsh-antidote starship fzf zoxide atuin bat lsd fd ripgrep shellcheck)
 node_tools_homebrew=(node pnpm)
 node_tools_arch=(nodejs pnpm)
+# Keep these packages aligned with font-family in ghostty/config.
+ghostty_font_homebrew="font-maple-mono-nf"
+ghostty_font_arch="maplemono-nf-unhinted"
 
 target_nvim="${target_config}/nvim"
 target_zsh_dir="${target_config}/zsh"
@@ -481,6 +490,48 @@ install_zsh_tools() {
 			;;
 		*)
 			echo "Unsupported OS: $(uname -s). Install Zsh tooling manually, then rerun this script." >&2
+			exit 1
+			;;
+	esac
+}
+
+install_font_homebrew() {
+	ensure_homebrew
+
+	if command -v brew >/dev/null 2>&1 &&
+		HOMEBREW_NO_AUTO_UPDATE=1 brew list --cask --versions "$ghostty_font_homebrew" >/dev/null 2>&1
+	then
+		echo "Maple Mono NF is already installed."
+		return
+	fi
+
+	run env HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask "$ghostty_font_homebrew"
+}
+
+install_font_arch() {
+	if pacman -Q "$ghostty_font_arch" >/dev/null 2>&1; then
+		echo "Maple Mono NF is already installed."
+		return
+	fi
+
+	ensure_paru
+	run paru -S --needed --noconfirm "$ghostty_font_arch"
+}
+
+install_font() {
+	case "$(uname -s)" in
+		Darwin)
+			install_font_homebrew
+			;;
+		Linux)
+			if is_arch_linux; then
+				install_font_arch
+			else
+				install_font_homebrew
+			fi
+			;;
+		*)
+			echo "Unsupported OS: $(uname -s). Install Maple Mono NF manually, then rerun with --skip-font-install." >&2
 			exit 1
 			;;
 	esac
@@ -1074,6 +1125,10 @@ fi
 
 if [ "$skip_skillhub_install" -eq 0 ]; then
 	install_skillhub_cli
+fi
+
+if [ "$skip_font_install" -eq 0 ]; then
+	install_font
 fi
 
 if [ "$skip_skill_install" -eq 0 ]; then
