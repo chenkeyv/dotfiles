@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
 	cat <<'EOF'
-Usage: ./setup.sh [--dry-run] [--copy] [--force]
+Usage: ./setup.sh [--dry-run] [--copy] [--force] [--no-animation]
                   [--skip-neovim-install] [--skip-zsh-install]
                   [--skip-python-install] [--skip-node-install]
                   [--skip-skillhub-install] [--skip-font-install]
@@ -45,6 +45,7 @@ Options:
   --dry-run              Print the actions without changing files.
   --copy                 Copy nvim instead of creating a symlink.
   --force                Replace existing targets without prompting.
+  --no-animation         Use plain progress output without animation or color.
   --skip-neovim-install  Only install/link configs; do not install or update Neovim.
   --skip-zsh-install     Only install/link configs; do not install or update Zsh tooling.
   --skip-python-install  Do not install uv or the uv-managed user-level Python.
@@ -71,6 +72,7 @@ EOF
 dry_run=0
 copy_mode=0
 force=0
+no_animation=0
 skip_neovim_install=0
 skip_zsh_install=0
 skip_python_install=0
@@ -94,6 +96,9 @@ while [ "$#" -gt 0 ]; do
 			;;
 		--force)
 			force=1
+			;;
+		--no-animation)
+			no_animation=1
 			;;
 		--skip-neovim-install)
 			skip_neovim_install=1
@@ -207,6 +212,77 @@ target_legacy_codex_skills="${CODEX_HOME:-${HOME}/.codex}/skills"
 target_personal_marketplace="${HOME}/.agents/plugins/marketplace.json"
 skillhub_cli_target="${HOME}/.local/bin/skillhub"
 agent_toolbox_marketplace_changed=0
+
+setup_started=$SECONDS
+setup_step=0
+setup_step_total=$((9 - skip_neovim_install - skip_zsh_install - skip_python_install -
+	skip_node_install - skip_skillhub_install - skip_font_install - skip_skill_install - skip_plugin_install))
+ui_accent=""
+ui_muted=""
+ui_reset=""
+ui_line_active=0
+ui_current_step=""
+
+finish_progress() {
+	local status="$1"
+	if [ "$ui_line_active" -eq 1 ]; then
+		printf '\r\033[2K'
+	fi
+	if [ "$status" -ne 0 ] && [ -n "$ui_current_step" ]; then
+		printf '\nSetup stopped during %s (exit %s).\n' "$ui_current_step" "$status" >&2
+	fi
+}
+
+start_progress() {
+	trap 'finish_progress "$?"' EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
+
+	# Keep escape sequences out of logs and leave installer prompts on the terminal.
+	if [ "$no_animation" -eq 0 ] && [ -t 1 ] && [ -t 2 ] &&
+		[ -n "${TERM:-}" ] && [ "$TERM" != dumb ] &&
+		[ -z "${CI:-}" ] && [ -z "${NO_COLOR:-}" ]
+	then
+		ui_accent=$'\033[1;36m'
+		ui_muted=$'\033[2m'
+		ui_reset=$'\033[0m'
+	fi
+
+	printf '\n  %sdotfiles%s %s/ setup%s\n' "$ui_accent" "$ui_reset" "$ui_muted" "$ui_reset"
+	if [ "$dry_run" -eq 1 ]; then
+		printf '  Preview mode: no files will be changed.\n'
+	fi
+
+	if [ -n "$ui_accent" ]; then
+		local frame cell
+		ui_line_active=1
+		# A short sweep, with no background process or hidden cursor to clean up.
+		for ((frame = 0; frame < 16; frame++)); do
+			printf '\r  '
+			for ((cell = 0; cell < 20; cell++)); do
+				if [ "$cell" -ge "$frame" ] && [ "$cell" -lt "$((frame + 5))" ]; then
+					printf '%s-%s' "$ui_accent" "$ui_reset"
+				else
+					printf '%s-%s' "$ui_muted" "$ui_reset"
+				fi
+			done
+			sleep 0.025
+		done
+		printf '\r\033[2K'
+		ui_line_active=0
+	fi
+}
+
+run_step() {
+	local label="$1"
+	shift
+	setup_step=$((setup_step + 1))
+	ui_current_step="$label"
+	printf '\n  %s[%s/%s]%s %s\n\n' "$ui_accent" "$setup_step" "$setup_step_total" "$ui_reset" "$label"
+	# Run in this shell so PATH updates, input, and errexit retain their behavior.
+	"$@"
+	ui_current_step=""
+}
 
 run() {
 	printf '+'
@@ -1101,47 +1177,50 @@ install_configs() {
 }
 
 # Keep startup files in place even if a later tool or plugin install fails.
-install_configs
+start_progress
+run_step "Link configuration" install_configs
 
 if [ "$dry_run" -eq 0 ]; then
 	echo "Dotfile configs installed. Once Zsh is available, load them with: exec zsh -l"
 fi
 
 if [ "$skip_neovim_install" -eq 0 ]; then
-	install_neovim
+	run_step "Neovim" install_neovim
 fi
 
 if [ "$skip_zsh_install" -eq 0 ]; then
-	install_zsh_tools
+	run_step "Zsh tooling" install_zsh_tools
 fi
 
 if [ "$skip_python_install" -eq 0 ]; then
-	install_user_python
+	run_step "Python / uv" install_user_python
 fi
 
 if [ "$skip_node_install" -eq 0 ]; then
-	install_node_tools
+	run_step "Node.js / pnpm" install_node_tools
 fi
 
 if [ "$skip_skillhub_install" -eq 0 ]; then
-	install_skillhub_cli
+	run_step "SkillHub CLI" install_skillhub_cli
 fi
 
 if [ "$skip_font_install" -eq 0 ]; then
-	install_font
+	run_step "Maple Mono font" install_font
 fi
 
 if [ "$skip_skill_install" -eq 0 ]; then
-	install_configured_skills
+	run_step "Codex skills" install_configured_skills
 fi
 
 if [ "$skip_plugin_install" -eq 0 ]; then
-	install_configured_plugins
+	run_step "Codex plugins" install_configured_plugins
 fi
 
+printf '\n'
 if [ "$dry_run" -eq 1 ]; then
 	echo "Dry run complete. No files were changed."
 else
 	echo "Dotfiles installed."
 	echo "Load the Zsh configuration in this terminal with: exec zsh -l"
 fi
+printf 'Total time: %ss.\n' "$((SECONDS - setup_started))"

@@ -21,6 +21,11 @@ pnpm, SkillHub CLI setup, and declarative Codex plugin and skill lists.
 ./setup.sh
 ```
 
+In an interactive terminal, setup opens with a brief cyan sweep and shows numbered phases
+with a total elapsed time. Installer output and prompts stay visible. Redirected output, CI,
+`TERM=dumb`, and `NO_COLOR=1` use plain text. Use `./setup.sh --no-animation` to opt out,
+or `./setup.sh --dry-run` to preview the presentation and planned actions without changing files.
+
 The script first backs up existing config files and replaces them with links to this repo. It then
 installs Neovim nightly, Zsh tooling, uv with Python 3.14 as the user-level default, Node.js with pnpm
 for JavaScript dependencies, the SkillHub CLI, the Maple Mono NF font, and the plugins and skills
