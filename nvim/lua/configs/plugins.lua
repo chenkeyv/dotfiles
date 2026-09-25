@@ -36,8 +36,6 @@ vim.pack.add({
 	"https://github.com/stevearc/conform.nvim",
 })
 
-require("configs.acp_dev")
-
 require("plugins.colorscheme")
 require("plugins.bufferline")
 require("plugins.statusline")
