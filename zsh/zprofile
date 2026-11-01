@@ -16,9 +16,31 @@ if [[ -z "${PNPM_HOME:-}" ]]; then
 	fi
 fi
 
-# Keep user-level tools, including uv-managed Python, OrbStack's CLI shims,
-# and pnpm-managed executables, ahead of package-manager binaries.
+# Keep user-level tools, including uv-managed Python, rustup, OrbStack's CLI
+# shims, and pnpm-managed executables, ahead of package-manager binaries. This
+# lives here, not in .zshrc, so `zsh -lc` resolves the same tools as a terminal.
 typeset -U path PATH
-path=("$PNPM_HOME/bin" "$PNPM_HOME" $path)
-[[ -d "$HOME/.orbstack/bin" ]] && path=("$HOME/.orbstack/bin" $path)
-[[ -d "$HOME/.local/bin" ]] && path=("$HOME/.local/bin" $path)
+path=(
+	"$HOME/.local/bin"
+	"$HOME/bin"
+	"${HOMEBREW_PREFIX:-/opt/homebrew}/opt/rustup/bin"
+	"$HOME/.cargo/bin"
+	"$HOME/go/bin"
+	"$HOME/.bun/bin"
+	"$HOME/.orbstack/bin"
+	"$PNPM_HOME/bin"
+	"$PNPM_HOME"
+	$path
+)
+path=(${^path}(N-/))
+
+# PATH is ready, so this can tell whether bat is really installed.
+if (( $+commands[bat] )); then
+	export PAGER="${PAGER:-bat --style=plain}"
+	if (( $+commands[col] )); then
+		export MANPAGER="${MANPAGER:-sh -c 'col -bx | bat --language=man --style=plain'}"
+		export MANROFFOPT="${MANROFFOPT:--c}"
+	fi
+fi
+
+export DOTFILES_ZPROFILE_LOADED=1
