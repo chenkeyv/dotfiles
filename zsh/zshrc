@@ -1,23 +1,18 @@
 [[ -o interactive ]] || return
 
-typeset -U path PATH fpath
+# Login shells already ran .zprofile. Terminals that start non-login shells
+# still need it, but nested shells inherit its result and must not reorder PATH.
+[[ -o login || -n "${DOTFILES_ZPROFILE_LOADED:-}" ]] || source "${ZDOTDIR}/.zprofile"
 
-for dir in \
-	"$HOME/.local/bin" \
-	"$HOME/bin" \
-	"$HOME/go/bin" \
-	"$HOME/.cargo/bin" \
-	"$HOME/.bun/bin" \
-	"/opt/homebrew/opt/rustup/bin"
-do
-	[[ -d "$dir" ]] && path=("$dir" $path)
-done
+typeset -U path PATH fpath
 
 typeset -ga ZSH_AUTOSUGGEST_STRATEGY=(match_prev_cmd completion history)
 
-export HISTFILE="${XDG_STATE_HOME:-$HOME/.local/state}/zsh/history"
-export HISTSIZE=50000
-export SAVEHIST=50000
+# Not exported: a child bash would otherwise write into this history file.
+HISTFILE="${XDG_STATE_HOME:-$HOME/.local/state}/zsh/history"
+HISTSIZE=50000
+SAVEHIST=50000
+typeset +x HISTFILE HISTSIZE SAVEHIST
 mkdir -p "${HISTFILE:h}" "${XDG_CACHE_HOME:-$HOME/.cache}/zsh"
 
 setopt auto_cd
@@ -27,7 +22,6 @@ setopt hist_expire_dups_first
 setopt hist_ignore_dups
 setopt hist_ignore_space
 setopt hist_verify
-setopt inc_append_history_time
 setopt pushd_ignore_dups
 setopt share_history
 
@@ -73,8 +67,11 @@ zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-dir
 
 autoload -Uz compinit
 
+bundled_zsh_data="${XDG_DATA_HOME:-$HOME/.local/share}/dotfiles"
+
 antidote_file=''
 for candidate in \
+	"$bundled_zsh_data/antidote/antidote.zsh" \
 	"${HOMEBREW_PREFIX:-}/opt/antidote/share/antidote/antidote.zsh" \
 	"/opt/homebrew/opt/antidote/share/antidote/antidote.zsh" \
 	"/usr/local/opt/antidote/share/antidote/antidote.zsh" \
@@ -91,15 +88,26 @@ done
 if [[ -n "$antidote_file" ]]; then
 	source "$antidote_file"
 
+	# The offline bundle ships plugin clones here so antidote never needs a network.
+	[[ -d "$bundled_zsh_data/antidote-home" ]] && export ANTIDOTE_HOME="$bundled_zsh_data/antidote-home"
+
 	antidote_bundle() {
 		local source_file="$1"
 		local bundle_file="$2"
+		local temp_file="${bundle_file}.$$"
 
 		[[ -f "$source_file" ]] || return 0
-		if [[ ! "$bundle_file" -nt "$source_file" ]]; then
-			antidote bundle <"$source_file" >|"$bundle_file"
+		# Publish only a complete bundle: a failed clone must not leave an empty
+		# file that looks newer than its source and disables plugins for good.
+		if [[ ! -s "$bundle_file" || ! "$bundle_file" -nt "$source_file" ]]; then
+			if antidote bundle <"$source_file" >|"$temp_file" && [[ -s "$temp_file" ]]; then
+				mv -f "$temp_file" "$bundle_file"
+			else
+				rm -f "$temp_file"
+				print -u2 "warning: could not update zsh plugins from ${source_file:t}; will retry next shell"
+			fi
 		fi
-		source "$bundle_file"
+		[[ -r "$bundle_file" ]] && source "$bundle_file"
 	}
 
 	antidote_bundle "${ZDOTDIR}/plugins.txt" "${XDG_CACHE_HOME:-$HOME/.cache}/zsh/plugins.zsh"
@@ -114,10 +122,12 @@ if (( $+functions[antidote_bundle] )); then
 fi
 
 (( $+commands[zoxide] )) && eval "$(zoxide init zsh)"
+# Before atuin, so Ctrl-R stays with atuin; fzf adds Ctrl-T, Alt-C, and **<Tab>.
+(( $+commands[fzf] )) && source <(fzf --zsh 2>/dev/null)
 (( $+commands[atuin] )) && eval "$(atuin init zsh --disable-up-arrow)"
 
 bindkey -e
 
 (( $+commands[starship] )) && eval "$(starship init zsh)"
 
-[[ -r "$HOME/.iterm2_shell_integration.zsh" ]] && source "$HOME/.iterm2_shell_integration.zsh"
+[[ "${TERM_PROGRAM:-}" == iTerm.app && -r "$HOME/.iterm2_shell_integration.zsh" ]] && source "$HOME/.iterm2_shell_integration.zsh"
