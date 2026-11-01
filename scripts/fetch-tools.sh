@@ -3,18 +3,23 @@ set -euo pipefail
 
 usage() {
 	cat <<'EOF'
-Usage: scripts/fetch-tools.sh [TARGET] [DEST]
+Usage: scripts/fetch-tools.sh [TARGET] [DEST] [DATA_DEST]
 
-Download portable user-space tools for offline dotfiles bundles.
+Download portable user-space tools for offline dotfiles bundles, and prepare the
+data the configs need to work without a network.
 
 Targets: linux-amd64, darwin-arm64, darwin-amd64.
-The default target is linux-amd64, intended for Ubuntu 20.04 or later without
-sudo. Tools are copied into DEST/bin, with support files under DEST/opt.
+The default target is linux-amd64, intended for Ubuntu 22.04 or later without
+sudo; Neovim nightly itself needs glibc 2.34. Tools are copied into DEST/bin, with support files under DEST/opt. Neovim
+plugins, Tree-sitter parsers, antidote, and Zsh plugins are prepared in
+DATA_DEST. Parsers are compiled, so the host must match TARGET.
 EOF
 }
 
 target="${1:-linux-amd64}"
 dest="${2:-dist/tools/${target}}"
+data_dest="${3:-dist/data/${target}}"
+repo_root="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 case "$target" in
 	linux-amd64)
@@ -22,18 +27,21 @@ case "$target" in
 		fzf_target="linux_amd64"
 		shellcheck_target="linux.x86_64"
 		neovim_pattern="nvim-linux-x86_64.tar.gz"
+		tree_sitter_target="linux-x64"
 		;;
 	darwin-arm64)
 		rust_target="aarch64-apple-darwin"
 		fzf_target="darwin_arm64"
 		shellcheck_target="darwin.aarch64"
 		neovim_pattern="nvim-macos-arm64.tar.gz"
+		tree_sitter_target="macos-arm64"
 		;;
 	darwin-amd64)
 		rust_target="x86_64-apple-darwin"
 		fzf_target="darwin_amd64"
 		shellcheck_target="darwin.x86_64"
 		neovim_pattern="nvim-macos-x86_64.tar.gz"
+		tree_sitter_target="macos-x64"
 		;;
 	-h | --help)
 		usage
@@ -54,8 +62,12 @@ require() {
 
 require gh
 require tar
+require git
+require gunzip
+require zsh
 
-mkdir -p "${dest}/bin"
+mkdir -p "${dest}/bin" "$data_dest"
+data_dest="$(CDPATH='' cd -- "$data_dest" && pwd)"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-tools.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 
@@ -80,6 +92,11 @@ host_matches_target() {
 			;;
 	esac
 }
+
+if ! host_matches_target; then
+	echo "bundle data for $target must be built on a native $target host" >&2
+	exit 1
+fi
 
 download_tool() {
 	local name="$1"
@@ -144,10 +161,6 @@ build_fd_from_source() {
 	local install_root="${tmp_dir}/fd-install"
 	local cargo_home="${tmp_dir}/cargo-home"
 
-	if ! host_matches_target; then
-		echo "fd prebuilt asset is unavailable for $target, and source build requires a native $target host" >&2
-		exit 1
-	fi
 	require cargo
 	CARGO_HOME="$cargo_home" cargo install fd-find --locked --root "$install_root"
 	cp "${install_root}/bin/fd" "${dest}/bin/fd"
@@ -192,6 +205,60 @@ EOF
 	chmod 755 "${dest}/bin/nvim"
 }
 
+# Puts tree-sitter in the returned directory for compiling parsers. It is a build
+# tool only, so the bundle does not ship it.
+prepare_tree_sitter_cli() {
+	local bin_dir="${tmp_dir}/tree-sitter-bin"
+	local asset="tree-sitter-${tree_sitter_target}"
+
+	mkdir -p "$bin_dir"
+	if ! gh release download --repo tree-sitter/tree-sitter --pattern "${asset}.gz" --dir "$bin_dir" --clobber; then
+		echo "failed to download required tool: tree-sitter CLI" >&2
+		exit 1
+	fi
+	gunzip -f "${bin_dir}/${asset}.gz"
+	mv "${bin_dir}/${asset}" "${bin_dir}/tree-sitter"
+	chmod 755 "${bin_dir}/tree-sitter"
+	"${bin_dir}/tree-sitter" --version
+}
+
+build_zsh_data() {
+	local antidote_dir="${data_dest}/dotfiles/antidote"
+	local antidote_home="${data_dest}/dotfiles/antidote-home"
+
+	rm -rf "$antidote_dir" "$antidote_home"
+	mkdir -p "${data_dest}/dotfiles"
+	git clone --quiet --depth 1 https://github.com/mattmc3/antidote.git "$antidote_dir"
+	rm -rf "${antidote_dir}/.git"
+
+	# Bundling clones each plugin into ANTIDOTE_HOME, where zshrc finds them later.
+	# shellcheck disable=SC2016
+	ANTIDOTE_HOME="$antidote_home" zsh -f -c '
+		source "$1/antidote.zsh"
+		antidote bundle <"$2/zsh/plugins.txt" >/dev/null || exit 1
+		antidote bundle <"$2/zsh/plugins-late.txt" >/dev/null || exit 1
+	' zsh "$antidote_dir" "$repo_root"
+}
+
+build_neovim_data() {
+	local work="${tmp_dir}/nvim-build"
+
+	prepare_tree_sitter_cli
+	mkdir -p "${work}/config" "${work}/state" "${work}/cache"
+	cp -R "${repo_root}/nvim" "${work}/config/nvim"
+	rm -f "${work}/config/nvim/nvim.log"
+
+	# Runs the real config, so plugins land at the revisions in the lockfile.
+	XDG_CONFIG_HOME="${work}/config" \
+		XDG_DATA_HOME="$data_dest" \
+		XDG_STATE_HOME="${work}/state" \
+		XDG_CACHE_HOME="${work}/cache" \
+		NVIM_LOG_FILE=/dev/null \
+		PATH="${tmp_dir}/tree-sitter-bin:${PATH}" \
+		"${dest}/bin/nvim" --headless -c "luafile ${repo_root}/scripts/prepare-nvim-data.lua" </dev/null
+	printf '\n'
+}
+
 download_tool ripgrep BurntSushi/ripgrep "ripgrep-*-${rust_target}.tar.gz" rg rg
 download_tool fd sharkdp/fd "fd-*-${rust_target}.tar.gz" fd fd latest optional
 if [ ! -x "${dest}/bin/fd" ]; then
@@ -204,6 +271,10 @@ download_tool fzf junegunn/fzf "fzf-*-${fzf_target}.tar.gz" fzf fzf
 download_tool shellcheck koalaman/shellcheck "shellcheck-*.${shellcheck_target}.tar.gz" shellcheck shellcheck
 download_tool atuin atuinsh/atuin "atuin-${rust_target}.tar.gz" atuin atuin latest optional
 download_neovim_nightly
+build_zsh_data
+build_neovim_data
 
 printf 'Downloaded tools into %s:\n' "$dest"
 find "$dest" -maxdepth 4 -type f -perm -111 -print | sort
+printf 'Prepared data in %s:\n' "$data_dest"
+du -sh "${data_dest}/nvim/site" "${data_dest}/dotfiles"
