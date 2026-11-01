@@ -8,16 +8,23 @@
     "presentations@openai-primary-runtime",
     "template-creator@openai-primary-runtime",
     "codex-app-tools@openai-bundled",
-    "sites@openai-bundled",
     "browser@openai-bundled",
     "chrome@openai-bundled",
     "computer-use@openai-bundled",
+    "unified-computer-use@openai-bundled",
     "messages@openai-bundled",
     "record-and-replay@openai-bundled",
     "visualize@openai-bundled",
+    "task-skills@personal",
+    "sites@openai-curated-remote",
     "build-ios-apps@openai-curated-remote",
     "build-web-apps@openai-curated-remote",
-    "build-web-data-visualization@openai-curated-remote"
+    "build-web-data-visualization@openai-curated-remote",
+    "data-analytics@openai-curated-remote",
+    "product-design@openai-curated-remote",
+    "swiftui-expert@openai-curated-remote",
+    "swift-concurrency@openai-curated-remote",
+    "unreal-engine-skills-for-codex@openai-curated-remote"
   ],
   "skills": [
     {

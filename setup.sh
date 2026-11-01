@@ -6,23 +6,22 @@ usage() {
 Usage: ./setup.sh [--dry-run] [--copy] [--force] [--no-animation]
                   [--skip-neovim-install] [--skip-zsh-install]
                   [--skip-python-install] [--skip-node-install]
+                  [--skip-editor-tools-install]
                   [--skip-skillhub-install] [--skip-font-install]
                   [--packages-file <path>]
                   [--skill <skill>]
                   [--skip-skill-install]
                   [--plugin <plugin>]
                   [--skip-plugin-install]
-                  [--install-agent-toolbox]
 
 Installs the currently maintained dotfiles.
 
 By default this first links the configs below, then installs Neovim HEAD/nightly,
-Zsh tooling, uv with a user-level Python, Node.js with pnpm, the SkillHub CLI,
-and the configured Maple Mono NF font:
+Zsh tooling, uv with a user-level Python, Node.js with pnpm, the language servers
+and formatters the Neovim config uses, and the configured Maple Mono NF font.
+Tools that are already on PATH are left alone.
   ~/.config/nvim       -> <repo>/nvim
   ~/.zshenv            -> <repo>/zsh/zshenv
-  ~/.zprofile          -> <repo>/zsh/zprofile
-  ~/.zshrc             -> <repo>/zsh/zshrc
   ~/.config/zsh/.zshenv -> <repo>/zsh/zshenv
   ~/.config/zsh/.zprofile -> <repo>/zsh/zprofile
   ~/.config/zsh/.zshrc -> <repo>/zsh/zshrc
@@ -50,8 +49,12 @@ Options:
   --skip-zsh-install     Only install/link configs; do not install or update Zsh tooling.
   --skip-python-install  Do not install uv or the uv-managed user-level Python.
   --skip-node-install    Do not install Node.js or pnpm.
+  --skip-editor-tools-install
+                         Do not install language servers, formatters, or the
+                         tree-sitter CLI.
   --skip-skillhub-install
-                         Do not install the SkillHub CLI.
+                         Do not bootstrap the SkillHub CLI, which is otherwise
+                         installed only when a configured skill needs it.
   --skip-font-install    Do not install the Maple Mono NF font used by Ghostty.
   --packages-file <path> Read plugins and skills from this JSON file instead of
                          <repo>/codex-packages.json.
@@ -59,13 +62,9 @@ Options:
   --skip-skill-install   Do not install skills from the file or --skill options.
   --plugin <plugin>      Install a PLUGIN@MARKETPLACE selector. Repeat as needed.
   --skip-plugin-install  Do not install plugins from the file or --plugin options.
-  --install-agent-toolbox
-                         Also request Agent Toolbox (kept for compatibility).
   -h, --help             Show this help.
 
-Only Neovim, Zsh, Starship, ShellCheck, uv, user-level Python, Node.js, pnpm,
-the SkillHub CLI, Maple Mono NF, configured skills, configured Codex plugins,
-and the bundled Surge skill when selected are installed by default.
+Codex plugins are skipped with a warning when the Codex CLI is not installed.
 EOF
 }
 
@@ -77,11 +76,11 @@ skip_neovim_install=0
 skip_zsh_install=0
 skip_python_install=0
 skip_node_install=0
+skip_editor_tools_install=0
 skip_skillhub_install=0
 skip_font_install=0
 skip_skill_install=0
 skip_plugin_install=0
-install_agent_toolbox_requested=0
 packages_file=""
 requested_skills=()
 requested_plugins=()
@@ -111,6 +110,9 @@ while [ "$#" -gt 0 ]; do
 			;;
 		--skip-node-install)
 			skip_node_install=1
+			;;
+		--skip-editor-tools-install)
+			skip_editor_tools_install=1
 			;;
 		--skip-skillhub-install)
 			skip_skillhub_install=1
@@ -148,9 +150,6 @@ while [ "$#" -gt 0 ]; do
 		--skip-plugin-install)
 			skip_plugin_install=1
 			;;
-		--install-agent-toolbox)
-			install_agent_toolbox_requested=1
-			;;
 		-h | --help)
 			usage
 			exit 0
@@ -180,16 +179,51 @@ source_starship="${script_dir}/starship/starship.toml"
 source_ghostty="${script_dir}/ghostty/config"
 source_surge_skill="${DOTFILES_SURGE_SKILL_SOURCE:-/Applications/Surge.app/Contents/Resources/Skills/surge}"
 source_personal_marketplace_helper="${script_dir}/scripts/ensure-personal-codex-marketplace.py"
-agent_toolbox_name="agent-toolbox"
-agent_toolbox_marketplace="personal"
-agent_toolbox_source_url="https://github.com/chenkeyv/agent-toolbox.git"
-agent_toolbox_selector="${agent_toolbox_name}@${agent_toolbox_marketplace}"
 skillhub_installer_url="https://skillhub-1388575217.cos.ap-guangzhou.myqcloud.com/install/install.sh"
 user_python_version="3.14"
-zsh_tools_homebrew=(zsh antidote starship fzf zoxide atuin bat lsd fd ripgrep shellcheck)
-zsh_tools_arch=(zsh zsh-antidote starship fzf zoxide atuin bat lsd fd ripgrep shellcheck)
-node_tools_homebrew=(node pnpm)
-node_tools_arch=(nodejs pnpm)
+# Each entry is command|homebrew-formula|arch-package; "-" means no package on
+# that platform. A tool is installed only when its command is missing.
+zsh_tools=(
+	"zsh|zsh|zsh"
+	"antidote|antidote|zsh-antidote"
+	"starship|starship|starship"
+	"fzf|fzf|fzf"
+	"zoxide|zoxide|zoxide"
+	"atuin|atuin|atuin"
+	"bat|bat|bat"
+	"lsd|lsd|lsd"
+	"fd|fd|fd"
+	"rg|ripgrep|ripgrep"
+	"shellcheck|shellcheck|shellcheck"
+)
+uv_tool=("uv|uv|uv")
+node_tools=("node|node|nodejs" "pnpm|pnpm|pnpm")
+# Keep aligned with nvim/lua/configs/lsp/server/init.lua and plugins/format.lua.
+# sourcekit-lsp and swift come with Xcode or the Swift toolchain. On Arch, tsc
+# has its own step because the Arch package predates TypeScript 7's --lsp.
+editor_tools=(
+	"tree-sitter|tree-sitter-cli|tree-sitter-cli"
+	"bash-language-server|bash-language-server|bash-language-server"
+	"clangd|llvm|clang"
+	"gopls|gopls|gopls"
+	"lua-language-server|lua-language-server|lua-language-server"
+	"marksman|marksman|marksman"
+	"ruff|ruff|ruff"
+	"rust-analyzer|rust-analyzer|rust-analyzer"
+	"tombi|tombi|tombi"
+	"tsc|typescript|-"
+	"ty|ty|ty"
+	"yaml-language-server|yaml-language-server|yaml-language-server"
+	"vscode-html-language-server|vscode-langservers-extracted|vscode-html-languageserver"
+	"vscode-css-language-server|vscode-langservers-extracted|vscode-css-languageserver"
+	"vscode-json-language-server|vscode-langservers-extracted|vscode-json-languageserver"
+	"clang-format|clang-format|clang"
+	"gofmt|go|go"
+	"goimports|goimports|go-tools"
+	"stylua|stylua|stylua"
+	"rustfmt|rust|rust"
+	"shfmt|shfmt|shfmt"
+)
 # Keep these packages aligned with font-family in ghostty/config.
 ghostty_font_homebrew="font-maple-mono-nf"
 ghostty_font_arch="maplemono-nf-unhinted"
@@ -197,8 +231,8 @@ ghostty_font_arch="maplemono-nf-unhinted"
 target_nvim="${target_config}/nvim"
 target_zsh_dir="${target_config}/zsh"
 target_zshenv="${HOME}/.zshenv"
-target_zprofile="${HOME}/.zprofile"
-target_zshrc_home="${HOME}/.zshrc"
+unread_zprofile="${HOME}/.zprofile"
+unread_zshrc="${HOME}/.zshrc"
 target_zshenv_xdg="${target_zsh_dir}/.zshenv"
 target_zprofile_xdg="${target_zsh_dir}/.zprofile"
 target_zshrc="${target_zsh_dir}/.zshrc"
@@ -211,12 +245,14 @@ target_agent_skills="${HOME}/.agents/skills"
 target_legacy_codex_skills="${CODEX_HOME:-${HOME}/.codex}/skills"
 target_personal_marketplace="${HOME}/.agents/plugins/marketplace.json"
 skillhub_cli_target="${HOME}/.local/bin/skillhub"
-agent_toolbox_marketplace_changed=0
+personal_marketplace_changed=0
+installed_codex_plugins=""
+package_manager=""
 
 setup_started=$SECONDS
 setup_step=0
 setup_step_total=$((9 - skip_neovim_install - skip_zsh_install - skip_python_install -
-	skip_node_install - skip_skillhub_install - skip_font_install - skip_skill_install - skip_plugin_install))
+	skip_node_install - skip_editor_tools_install - skip_font_install - skip_skill_install - skip_plugin_install))
 ui_accent=""
 ui_muted=""
 ui_reset=""
@@ -444,12 +480,17 @@ ensure_homebrew() {
 		return
 	fi
 
-	local install_url
+	local install_url install_command
 	install_url="https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
-	run env NONINTERACTIVE=1 bash -c \
-		"/bin/bash -c \"\$(curl -fsSL \"\$1\")\"" \
-		bash \
-		"$install_url"
+	install_command="/bin/bash -c \"\$(curl -fsSL \"\$1\")\""
+
+	# A new Mac needs sudo for this. NONINTERACTIVE forbids the password prompt
+	# and aborts without cached credentials, so use it only without a terminal.
+	if [ -t 0 ]; then
+		run bash -c "$install_command" bash "$install_url"
+	else
+		run env NONINTERACTIVE=1 bash -c "$install_command" bash "$install_url"
+	fi
 
 	if [ "$dry_run" -eq 1 ]; then
 		return
@@ -496,140 +537,193 @@ ensure_paru() {
 	run_in_dir "${build_dir}/paru" makepkg -si --noconfirm
 }
 
-install_neovim_homebrew() {
-	ensure_homebrew
-
-	if command -v brew >/dev/null 2>&1 &&
-		HOMEBREW_NO_AUTO_UPDATE=1 brew list --versions neovim >/dev/null 2>&1 &&
-		has_head_neovim
-	then
-		return
-	elif command -v brew >/dev/null 2>&1 &&
-		HOMEBREW_NO_AUTO_UPDATE=1 brew list --versions neovim >/dev/null 2>&1
-	then
-		run env HOMEBREW_NO_AUTO_UPDATE=1 brew reinstall --HEAD neovim
-	else
-		run env HOMEBREW_NO_AUTO_UPDATE=1 brew install --HEAD neovim
-	fi
-}
-
-install_neovim_arch() {
-	if pacman -Q neovim-git >/dev/null 2>&1; then
-		echo "neovim-git is already installed."
+detect_package_manager() {
+	if [ -n "$package_manager" ]; then
 		return
 	fi
 
-	ensure_paru
-	run paru -S --needed --noconfirm neovim-git
-}
-
-install_zsh_tools_homebrew() {
-	ensure_homebrew
-	run env HOMEBREW_NO_AUTO_UPDATE=1 brew install "${zsh_tools_homebrew[@]}"
-}
-
-install_zsh_tools_arch() {
-	ensure_paru
-	run paru -S --needed --noconfirm "${zsh_tools_arch[@]}"
-}
-
-install_neovim() {
 	case "$(uname -s)" in
 		Darwin)
-			install_neovim_homebrew
+			package_manager=homebrew
 			;;
 		Linux)
 			if is_arch_linux; then
-				install_neovim_arch
+				package_manager=paru
 			else
-				install_neovim_homebrew
+				package_manager=homebrew
 			fi
 			;;
 		*)
-			echo "Unsupported OS: $(uname -s). Install Neovim nightly manually, then rerun this script." >&2
+			package_manager=unsupported
+			;;
+	esac
+}
+
+require_package_manager() {
+	local description="$1"
+
+	detect_package_manager
+	case "$package_manager" in
+		homebrew)
+			ensure_homebrew
+			;;
+		paru)
+			ensure_paru
+			;;
+		*)
+			echo "Unsupported OS: $(uname -s). Install ${description} manually, then rerun with its --skip option." >&2
+			exit 1
+			;;
+	esac
+}
+
+install_packages() {
+	local description="$1"
+	shift
+
+	require_package_manager "$description"
+	case "$package_manager" in
+		homebrew)
+			run env HOMEBREW_NO_AUTO_UPDATE=1 brew install "$@"
+			;;
+		paru)
+			run paru -S --needed --noconfirm "$@"
+			;;
+	esac
+}
+
+has_tool() {
+	local tool="$1"
+	local candidate
+
+	if [ "$tool" != antidote ]; then
+		command -v "$tool" >/dev/null 2>&1
+		return
+	fi
+
+	# Antidote is a Zsh function, not a command. Keep aligned with zsh/zshrc.
+	for candidate in \
+		/opt/homebrew/opt/antidote/share/antidote/antidote.zsh \
+		/usr/local/opt/antidote/share/antidote/antidote.zsh \
+		/home/linuxbrew/.linuxbrew/opt/antidote/share/antidote/antidote.zsh \
+		/usr/share/zsh-antidote/antidote.zsh \
+		/usr/share/antidote/antidote.zsh
+	do
+		if [ -r "$candidate" ]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+install_missing_tools() {
+	local description="$1"
+	shift
+	local entry tool homebrew_package arch_package package existing
+	local -a missing=()
+
+	detect_package_manager
+	if [ "$package_manager" = homebrew ]; then
+		# Homebrew may be installed but absent from PATH in this shell.
+		detect_brew || true
+	fi
+
+	for entry in "$@"; do
+		IFS='|' read -r tool homebrew_package arch_package <<<"$entry"
+		if has_tool "$tool"; then
+			continue
+		fi
+
+		case "$package_manager" in
+			homebrew)
+				package="$homebrew_package"
+				;;
+			paru)
+				package="$arch_package"
+				;;
+			*)
+				package="$tool"
+				;;
+		esac
+		if [ "$package" = "-" ]; then
+			continue
+		fi
+
+		if [ "${#missing[@]}" -gt 0 ]; then
+			for existing in "${missing[@]}"; do
+				if [ "$existing" = "$package" ]; then
+					continue 2
+				fi
+			done
+		fi
+		missing+=("$package")
+	done
+
+	if [ "${#missing[@]}" -eq 0 ]; then
+		echo "${description} already installed."
+		return
+	fi
+
+	install_packages "$description" "${missing[@]}"
+}
+
+install_neovim() {
+	if has_head_neovim; then
+		return
+	fi
+
+	detect_package_manager
+	case "$package_manager" in
+		homebrew)
+			ensure_homebrew
+			if command -v brew >/dev/null 2>&1 &&
+				HOMEBREW_NO_AUTO_UPDATE=1 brew list --versions neovim >/dev/null 2>&1
+			then
+				run env HOMEBREW_NO_AUTO_UPDATE=1 brew reinstall --HEAD neovim
+			else
+				run env HOMEBREW_NO_AUTO_UPDATE=1 brew install --HEAD neovim
+			fi
+			;;
+		paru)
+			if pacman -Q neovim-git >/dev/null 2>&1; then
+				echo "neovim-git is already installed."
+				return
+			fi
+			install_packages "Neovim nightly" neovim-git
+			;;
+		*)
+			echo "Unsupported OS: $(uname -s). Install Neovim nightly manually, then rerun with --skip-neovim-install." >&2
 			exit 1
 			;;
 	esac
 }
 
 install_zsh_tools() {
-	case "$(uname -s)" in
-		Darwin)
-			install_zsh_tools_homebrew
-			;;
-		Linux)
-			if is_arch_linux; then
-				install_zsh_tools_arch
-			else
-				install_zsh_tools_homebrew
-			fi
-			;;
-		*)
-			echo "Unsupported OS: $(uname -s). Install Zsh tooling manually, then rerun this script." >&2
-			exit 1
-			;;
-	esac
-}
-
-install_font_homebrew() {
-	ensure_homebrew
-
-	if command -v brew >/dev/null 2>&1 &&
-		HOMEBREW_NO_AUTO_UPDATE=1 brew list --cask --versions "$ghostty_font_homebrew" >/dev/null 2>&1
-	then
-		echo "Maple Mono NF is already installed."
-		return
-	fi
-
-	run env HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask "$ghostty_font_homebrew"
-}
-
-install_font_arch() {
-	if pacman -Q "$ghostty_font_arch" >/dev/null 2>&1; then
-		echo "Maple Mono NF is already installed."
-		return
-	fi
-
-	ensure_paru
-	run paru -S --needed --noconfirm "$ghostty_font_arch"
+	install_missing_tools "Zsh tooling" "${zsh_tools[@]}"
 }
 
 install_font() {
-	case "$(uname -s)" in
-		Darwin)
-			install_font_homebrew
-			;;
-		Linux)
-			if is_arch_linux; then
-				install_font_arch
-			else
-				install_font_homebrew
+	detect_package_manager
+	case "$package_manager" in
+		homebrew)
+			ensure_homebrew
+			if command -v brew >/dev/null 2>&1 &&
+				HOMEBREW_NO_AUTO_UPDATE=1 brew list --cask --versions "$ghostty_font_homebrew" >/dev/null 2>&1
+			then
+				echo "Maple Mono NF is already installed."
+				return
 			fi
+			run env HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask "$ghostty_font_homebrew"
+			;;
+		paru)
+			if pacman -Q "$ghostty_font_arch" >/dev/null 2>&1; then
+				echo "Maple Mono NF is already installed."
+				return
+			fi
+			install_packages "Maple Mono NF" "$ghostty_font_arch"
 			;;
 		*)
 			echo "Unsupported OS: $(uname -s). Install Maple Mono NF manually, then rerun with --skip-font-install." >&2
-			exit 1
-			;;
-	esac
-}
-
-install_uv() {
-	case "$(uname -s)" in
-		Darwin)
-			ensure_homebrew
-			run env HOMEBREW_NO_AUTO_UPDATE=1 brew install uv
-			;;
-		Linux)
-			if is_arch_linux; then
-				ensure_paru
-				run paru -S --needed --noconfirm uv
-			else
-				ensure_homebrew
-				run env HOMEBREW_NO_AUTO_UPDATE=1 brew install uv
-			fi
-			;;
-		*)
-			echo "Unsupported OS: $(uname -s). Install uv manually, then rerun this script." >&2
 			exit 1
 			;;
 	esac
@@ -698,19 +792,17 @@ find_python3() {
 }
 
 install_user_python() {
-	install_uv
+	install_missing_tools "uv" "${uv_tool[@]}"
 
-	if [ "$dry_run" -eq 0 ]; then
-		hash -r
-		if ! command -v uv >/dev/null 2>&1; then
-			echo "uv was installed, but it is still not available in PATH." >&2
-			exit 1
-		fi
-
+	hash -r
+	if command -v uv >/dev/null 2>&1; then
 		if has_user_python; then
 			activate_user_python
 			return
 		fi
+	elif [ "$dry_run" -eq 0 ]; then
+		echo "uv was installed, but it is still not available in PATH." >&2
+		exit 1
 	fi
 
 	run uv python install "$user_python_version" --default
@@ -719,33 +811,44 @@ install_user_python() {
 	fi
 }
 
-install_node_tools_homebrew() {
-	ensure_homebrew
-	run env HOMEBREW_NO_AUTO_UPDATE=1 brew install "${node_tools_homebrew[@]}"
-}
-
-install_node_tools_arch() {
-	ensure_paru
-	run paru -S --needed --noconfirm "${node_tools_arch[@]}"
-}
-
 install_node_tools() {
-	case "$(uname -s)" in
-		Darwin)
-			install_node_tools_homebrew
-			;;
-		Linux)
-			if is_arch_linux; then
-				install_node_tools_arch
-			else
-				install_node_tools_homebrew
-			fi
-			;;
-		*)
-			echo "Unsupported OS: $(uname -s). Install Node.js and pnpm manually, then rerun this script." >&2
-			exit 1
-			;;
-	esac
+	install_missing_tools "Node.js and pnpm" "${node_tools[@]}"
+}
+
+has_native_typescript() {
+	local version
+
+	if ! command -v tsc >/dev/null 2>&1; then
+		return 1
+	fi
+	version="$(tsc --version 2>/dev/null)" || return 1
+	version="${version#Version }"
+	[ "${version%%.*}" -ge 7 ] 2>/dev/null
+}
+
+install_typescript_with_pnpm() {
+	local pnpm_home
+
+	if has_native_typescript; then
+		return
+	fi
+	if ! command -v pnpm >/dev/null 2>&1 && [ "$dry_run" -eq 0 ]; then
+		echo "pnpm is required for TypeScript 7; skipping the tsc language server." >&2
+		return
+	fi
+
+	# Matches PNPM_HOME in zsh/zprofile, which this shell has not loaded.
+	pnpm_home="${PNPM_HOME:-${XDG_DATA_HOME:-${HOME}/.local/share}/pnpm}"
+	run env PNPM_HOME="$pnpm_home" PATH="${pnpm_home}:${pnpm_home}/bin:${PATH}" \
+		pnpm add --global typescript@latest
+}
+
+install_editor_tools() {
+	install_missing_tools "Editor tools" "${editor_tools[@]}"
+
+	if [ "$package_manager" = paru ]; then
+		install_typescript_with_pnpm
+	fi
 }
 
 find_skillhub_cli() {
@@ -951,14 +1054,18 @@ install_skillhub_ref() {
 	local executable
 
 	executable="$(find_skillhub_cli)" || true
-	if [ -z "$executable" ]; then
-		if [ "$dry_run" -eq 1 ] && [ "$skip_skillhub_install" -eq 0 ]; then
+	if [ -z "$executable" ] && [ "$skip_skillhub_install" -eq 0 ]; then
+		# Bootstrapped from a remote script, so fetch it only when a skill needs it.
+		install_skillhub_cli
+		executable="$(find_skillhub_cli)" || true
+		if [ -z "$executable" ] && [ "$dry_run" -eq 1 ]; then
 			executable="$skillhub_cli_target"
-		else
-			echo "SkillHub CLI is required to install configured skills." >&2
-			echo "Rerun without --skip-skillhub-install or skip skills with --skip-skill-install." >&2
-			exit 1
 		fi
+	fi
+	if [ -z "$executable" ]; then
+		echo "SkillHub CLI is required to install configured skills." >&2
+		echo "Rerun without --skip-skillhub-install or skip skills with --skip-skill-install." >&2
+		exit 1
 	fi
 	run "$executable" --skip-self-upgrade install "$skill_ref" --dir "$target_agent_skills"
 }
@@ -1048,10 +1155,6 @@ load_configured_plugins() {
 		append_plugin "$line"
 	done <<<"$entries"
 
-	if [ "$install_agent_toolbox_requested" -eq 1 ]; then
-		append_plugin "$agent_toolbox_selector"
-	fi
-
 	if [ "${#requested_plugins[@]}" -gt 0 ]; then
 		for line in "${requested_plugins[@]}"; do
 			validate_plugin_selector "$line"
@@ -1059,38 +1162,61 @@ load_configured_plugins() {
 	fi
 }
 
-has_codex_plugin() {
-	local plugin_selector="$1"
+# Read once: starting Codex for every configured plugin is slow.
+load_installed_codex_plugins() {
 	local payload python_executable
 
-	payload="$(codex plugin list --json 2>/dev/null)" || return 1
-	python_executable="$(find_python3)" || return 1
-	"$python_executable" - "$plugin_selector" "$payload" <<'PY'
+	installed_codex_plugins=""
+	payload="$(codex plugin list --json 2>/dev/null)" || return 0
+	python_executable="$(find_python3)" || return 0
+	installed_codex_plugins="$(
+		printf '%s' "$payload" | "$python_executable" -c '
 import json
 import sys
 
-selector = sys.argv[1]
 try:
-    data = json.loads(sys.argv[2])
+    data = json.load(sys.stdin)
 except json.JSONDecodeError:
-    raise SystemExit(1)
+    raise SystemExit(0)
 
 installed = data.get("installed", []) if isinstance(data, dict) else []
 for plugin in installed:
-    if not isinstance(plugin, dict):
-        continue
     if (
-        plugin.get("pluginId") == selector
+        isinstance(plugin, dict)
         and plugin.get("installed") is True
         and plugin.get("enabled") is True
     ):
-        raise SystemExit(0)
-
-raise SystemExit(1)
-PY
+        print(plugin.get("pluginId"))
+'
+	)" || installed_codex_plugins=""
 }
 
-ensure_agent_toolbox_marketplace() {
+has_codex_plugin() {
+	case $'\n'"$installed_codex_plugins"$'\n' in
+		*$'\n'"$1"$'\n'*)
+			return 0
+			;;
+	esac
+	return 1
+}
+
+personal_plugin_source_url() {
+	case "$1" in
+		agent-toolbox@personal)
+			printf '%s\n' "https://github.com/chenkeyv/agent-toolbox.git"
+			;;
+		task-skills@personal)
+			printf '%s\n' "https://github.com/chenkeyv/task-skills.git"
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
+ensure_personal_marketplace_entry() {
+	local plugin_name="$1"
+	local source_url="$2"
 	local python_executable status
 
 	ensure_source "$source_personal_marketplace_helper"
@@ -1099,11 +1225,11 @@ ensure_agent_toolbox_marketplace() {
 		exit 1
 	}
 
-	if "$python_executable" "$source_personal_marketplace_helper" --check \
-		"$target_personal_marketplace" "$agent_toolbox_source_url"
+	if "$python_executable" "$source_personal_marketplace_helper" --check --name "$plugin_name" \
+		"$target_personal_marketplace" "$source_url"
 	then
-		echo "Agent Toolbox personal marketplace already configured."
-		agent_toolbox_marketplace_changed=0
+		echo "Personal Codex marketplace already lists ${plugin_name}."
+		personal_marketplace_changed=0
 		return
 	else
 		status=$?
@@ -1112,14 +1238,15 @@ ensure_agent_toolbox_marketplace() {
 		fi
 	fi
 
-	echo "Configuring Agent Toolbox in the personal Codex marketplace."
-	agent_toolbox_marketplace_changed=1
-	run "$python_executable" "$source_personal_marketplace_helper" \
-		"$target_personal_marketplace" "$agent_toolbox_source_url"
+	echo "Adding ${plugin_name} to the personal Codex marketplace."
+	personal_marketplace_changed=1
+	run "$python_executable" "$source_personal_marketplace_helper" --name "$plugin_name" \
+		"$target_personal_marketplace" "$source_url"
 }
 
 install_configured_plugins() {
-	local plugin
+	local plugin source_url status
+	local first_failure=0
 
 	load_configured_plugins
 	if [ "${#requested_plugins[@]}" -eq 0 ]; then
@@ -1127,30 +1254,38 @@ install_configured_plugins() {
 	fi
 
 	if ! command -v codex >/dev/null 2>&1; then
-		if [ "$dry_run" -eq 1 ]; then
-			echo "Codex CLI not found; configured plugin installation would require codex."
-		else
-			echo "Codex CLI is required to install configured plugins." >&2
-			exit 1
-		fi
+		echo "Codex CLI not found; skipping ${#requested_plugins[@]} configured plugins." \
+			"Install Codex, then rerun setup to add them."
+		return
 	fi
 
+	load_installed_codex_plugins
+
 	for plugin in "${requested_plugins[@]}"; do
-		agent_toolbox_marketplace_changed=0
-		if [ "$plugin" = "$agent_toolbox_selector" ]; then
-			ensure_agent_toolbox_marketplace
+		personal_marketplace_changed=0
+		if source_url="$(personal_plugin_source_url "$plugin")"; then
+			ensure_personal_marketplace_entry "${plugin%@*}" "$source_url"
 		fi
 
-		if command -v codex >/dev/null 2>&1 &&
-			has_codex_plugin "$plugin" &&
-			[ "$agent_toolbox_marketplace_changed" -eq 0 ]
-		then
+		if has_codex_plugin "$plugin" && [ "$personal_marketplace_changed" -eq 0 ]; then
 			echo "Codex plugin already installed and enabled: $plugin"
 			continue
 		fi
 
-		run codex plugin add "$plugin"
+		# One bad selector must not block the plugins after it.
+		status=0
+		run codex plugin add "$plugin" || status=$?
+		if [ "$status" -ne 0 ]; then
+			echo "Failed to install Codex plugin ${plugin} (exit ${status}); continuing." >&2
+			if [ "$first_failure" -eq 0 ]; then
+				first_failure="$status"
+			fi
+		fi
 	done
+
+	if [ "$first_failure" -ne 0 ]; then
+		exit "$first_failure"
+	fi
 }
 
 install_surge_skill() {
@@ -1162,11 +1297,23 @@ install_surge_skill() {
 	link_file "$source_surge_skill" "$target_surge_skill" "codex-skill-surge"
 }
 
+# ~/.zshenv points ZDOTDIR at the XDG directory, so zsh never reads these two.
+retire_unread_zsh_file() {
+	local target_path="$1"
+	local source_path="$2"
+
+	if [ -L "$target_path" ] && [ "$(readlink "$target_path")" = "$source_path" ]; then
+		run rm "$target_path"
+	elif [ -e "$target_path" ] || [ -L "$target_path" ]; then
+		echo "Note: zsh ignores ${target_path} once ZDOTDIR is set. Move anything you still need to ${target_zsh_dir}/local.zsh."
+	fi
+}
+
 install_configs() {
 	install_dir "$source_nvim" "$target_nvim" "nvim"
 	link_file "$source_zshenv" "$target_zshenv" "zshenv"
-	link_file "$source_zprofile" "$target_zprofile" "zprofile"
-	link_file "$source_zshrc" "$target_zshrc_home" "zshrc.home"
+	retire_unread_zsh_file "$unread_zprofile" "$source_zprofile"
+	retire_unread_zsh_file "$unread_zshrc" "$source_zshrc"
 	link_file "$source_zshenv" "$target_zshenv_xdg" "zshenv.xdg"
 	link_file "$source_zprofile" "$target_zprofile_xdg" "zprofile.xdg"
 	link_file "$source_zshrc" "$target_zshrc" "zshrc"
@@ -1200,8 +1347,8 @@ if [ "$skip_node_install" -eq 0 ]; then
 	run_step "Node.js / pnpm" install_node_tools
 fi
 
-if [ "$skip_skillhub_install" -eq 0 ]; then
-	run_step "SkillHub CLI" install_skillhub_cli
+if [ "$skip_editor_tools_install" -eq 0 ]; then
+	run_step "Editor tools" install_editor_tools
 fi
 
 if [ "$skip_font_install" -eq 0 ]; then
