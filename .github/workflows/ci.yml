@@ -24,22 +24,13 @@ jobs:
         with:
           go-version: "1.22.x"
 
-      - name: Validate setup script syntax
+      - name: Install Neovim nightly
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          bash -n setup.sh
-          bash -n scripts/fetch-tools.sh
+          gh release download nightly --repo neovim/neovim --pattern nvim-linux-x86_64.tar.gz --dir "$RUNNER_TEMP"
+          tar -xzf "$RUNNER_TEMP/nvim-linux-x86_64.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/nvim-linux-x86_64/bin" >> "$GITHUB_PATH"
 
-      - name: Run ShellCheck
-        run: shellcheck setup.sh scripts/fetch-tools.sh
-
-      - name: Validate Go code
-        run: |
-          go test ./...
-          CGO_ENABLED=0 go build -trimpath -o /tmp/dotfiles ./cmd/dotfiles
-          /tmp/dotfiles pack -o cmd/dotfiles/payload
-          CGO_ENABLED=0 go build -tags embedded -trimpath -o /tmp/dotfiles-embedded ./cmd/dotfiles
-          /tmp/dotfiles-embedded list >/dev/null
-          rm -rf cmd/dotfiles/payload
-
-      - name: Validate Zsh config syntax
-        run: zsh -n zsh/zshenv zsh/zprofile zsh/zshrc
+      - name: Run all checks
+        run: make validate
