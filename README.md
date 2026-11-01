@@ -4,10 +4,9 @@
 
 Configurations of my daily utils.
 
-- Neovim
+- Neovim, with its language servers, formatters, and pinned plugins
 - Zsh
 - Ghostty
-- SkillHub CLI
 - Declared Codex plugins and standalone skills
 - ShellCheck validation
 - Offline bundle builder for GitHub Actions artifacts
@@ -15,7 +14,7 @@ Configurations of my daily utils.
 ## Setup
 
 This repo currently maintains Neovim, Zsh, and Ghostty configs, uv-managed user-level Python, Node.js with
-pnpm, SkillHub CLI setup, and declarative Codex plugin and skill lists.
+pnpm, and declarative Codex plugin and skill lists.
 
 ```sh
 ./setup.sh
@@ -28,10 +27,14 @@ or `./setup.sh --dry-run` to preview the presentation and planned actions withou
 
 The script first backs up existing config files and replaces them with links to this repo. It then
 installs Neovim nightly, Zsh tooling, uv with Python 3.14 as the user-level default, Node.js with pnpm
-for JavaScript dependencies, the SkillHub CLI, the Maple Mono NF font, and the plugins and skills
-declared in `codex-packages.json`. Config links remain installed if a later installation fails; fix the reported
-error and rerun to finish installing tools. It is safe to rerun; existing links, plugins, skills, and
-tools are detected and skipped.
+for JavaScript dependencies, the language servers and formatters Neovim uses, the Maple Mono NF font,
+and the plugins and skills declared in `codex-packages.json`. Config links remain installed if a later
+installation fails; fix the reported error and rerun to finish installing tools. It is safe to rerun:
+existing links, plugins, and skills are detected and skipped, and a tool is installed only when its
+command is missing from `PATH`, so setup does not upgrade tools you already have.
+
+On a new Mac, the Homebrew installer asks for your password and a confirmation. Without a terminal, it
+runs non-interactively and needs passwordless or cached `sudo`.
 
 After setup, load the configuration in the current terminal:
 
@@ -57,11 +60,20 @@ Antidote must be installed successfully for the prompt and plugins to appear.
   and `python3` through `~/.local/bin`. The operating system Python remains unchanged.
 - Node.js: installs Node.js and pnpm through Homebrew or `paru`; use pnpm for project dependency
   installation and lockfiles.
-- SkillHub: installs the CLI through the upstream `--cli-only` bootstrap. Skills using the
-  `skillhub` installer are installed into `~/.agents/skills`.
+- Editor tools: installs the `tree-sitter` CLI, language servers, and formatters listed in
+  `editor_tools` in `setup.sh`. `sourcekit-lsp` and `swift` come with Xcode or the Swift toolchain.
+  On Arch Linux, TypeScript comes from pnpm because the Arch package predates `tsc --lsp`.
+- Neovim plugins: `nvim/nvim-pack-lock.json` is tracked, so a new machine installs the same plugin
+  revisions. Commit it after `vim.pack.update()`. Tree-sitter parsers are limited to the languages
+  listed in `nvim/lua/plugins/treesitter.lua`; add a language there to get its parser.
+- SkillHub: when a configured skill uses the `skillhub` installer, setup installs the CLI through the
+  upstream `--cli-only` bootstrap, then installs the skill into `~/.agents/skills`.
 - Codex plugins: installs `PLUGIN@MARKETPLACE` selectors from the `plugins` array. Bundled and
-  runtime marketplaces are supplied by Codex. For Agent Toolbox, setup preserves unrelated entries
-  in `~/.agents/plugins/marketplace.json` and adds a Git-backed entry to the personal marketplace.
+  runtime marketplaces are supplied by Codex. For `@personal` plugins, setup preserves unrelated
+  entries in `~/.agents/plugins/marketplace.json` and adds a Git-backed entry to the personal
+  marketplace. A plugin that fails does not block the rest, but setup still exits non-zero. Without the
+  Codex CLI, setup skips plugins with a warning. The list holds plugins that work from Codex alone;
+  account connectors such as Gmail or GitHub need sign-in and stay out of this repo.
 - Standalone skills: the `skills` array records each skill's name, installer, and any required
   reference. Local-only entries are inventoried but cannot be recreated when their
   source directory is absent.
@@ -89,10 +101,30 @@ rm -rf cmd/dotfiles/payload
 
 The bundle artifact is a Go binary with the payload embedded through Go's `embed` package, so it
 does not require `tar`, `base64`, network access, or sudo on the target host. Daily GitHub Actions
-builds publish native artifacts for `linux-amd64`, `darwin-arm64`, and `darwin-amd64`. Each artifact
-includes the dotfiles payload plus portable user-space tools downloaded by `scripts/fetch-tools.sh`,
-including the latest Neovim nightly for that platform from the daily workflow run.
-The payload includes the Ghostty config, and `apply` installs it alongside the shell and editor configs.
+builds publish native artifacts for `linux-amd64`, `darwin-arm64`, and `darwin-amd64`, kept for 7 days.
+Each artifact includes the dotfiles payload plus portable user-space tools downloaded by
+`scripts/fetch-tools.sh`, including the latest Neovim nightly for that platform from the daily workflow
+run. The payload includes the Ghostty config, and `apply` installs it alongside the shell and editor
+configs.
+
+Each artifact also carries what the configs would otherwise download: Neovim plugins at their locked
+revisions, compiled Tree-sitter parsers, blink.cmp's fuzzy library, antidote, and the Zsh plugins.
+`apply` unpacks these under `~/.local/share` once per bundle build, replacing `nvim/site` and backing up
+the old copy unless `--force` is given. The workflow checks each artifact with Git network access
+blocked. Zsh itself and language servers are not included, so editing works offline without LSP unless
+the host provides the servers.
+
+To build a bundle locally, on a host that matches the target:
+
+```sh
+scripts/fetch-tools.sh darwin-arm64 dist/tools/darwin-arm64 dist/data/darwin-arm64
+go build -trimpath -o /tmp/dotfiles-pack ./cmd/dotfiles
+/tmp/dotfiles-pack pack --tools-dir dist/tools/darwin-arm64 --data-dir dist/data/darwin-arm64 \
+  -o cmd/dotfiles/payload
+CGO_ENABLED=0 go build -tags embedded -trimpath -o dotfiles-env ./cmd/dotfiles
+rm -rf cmd/dotfiles/payload
+scripts/nvim-smoke.sh --home <home-after-apply>
+```
 
 On an offline host:
 
@@ -118,8 +150,8 @@ Install only the config links and skip install/update work:
 
 ```sh
 ./setup.sh --skip-neovim-install --skip-zsh-install --skip-python-install \
-  --skip-node-install --skip-skillhub-install --skip-skill-install \
-  --skip-plugin-install --skip-font-install
+  --skip-node-install --skip-editor-tools-install --skip-skillhub-install \
+  --skip-skill-install --skip-plugin-install --skip-font-install
 ```
 
 Skip uv and user-level Python installation:
@@ -134,7 +166,13 @@ Skip Node.js and pnpm installation:
 ./setup.sh --skip-node-install
 ```
 
-Skip SkillHub CLI installation:
+Skip language servers, formatters, and the `tree-sitter` CLI:
+
+```sh
+./setup.sh --skip-editor-tools-install
+```
+
+Refuse to bootstrap the SkillHub CLI, even if a configured skill needs it:
 
 ```sh
 ./setup.sh --skip-skillhub-install
@@ -192,9 +230,6 @@ To skip either category for one setup run:
 ./setup.sh --skip-plugin-install
 ```
 
-`--install-agent-toolbox` remains as a compatibility alias that adds Agent Toolbox to the requested
-plugin set.
-
 ## Tooling Decisions
 
 - [agnix evaluation](docs/decisions/agnix.md): keep the dependency out of the managed setup for
@@ -202,25 +237,18 @@ plugin set.
 
 ## Validation
 
-```sh
-bash -n setup.sh
-bash -n scripts/fetch-tools.sh
-shellcheck setup.sh scripts/fetch-tools.sh
-python3 -m json.tool codex-packages.json >/dev/null
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
-go test ./...
-CGO_ENABLED=0 go build -trimpath -o /tmp/dotfiles ./cmd/dotfiles
-/tmp/dotfiles pack -o cmd/dotfiles/payload
-CGO_ENABLED=0 go build -tags embedded -trimpath -o /tmp/dotfiles-embedded ./cmd/dotfiles
-rm -rf cmd/dotfiles/payload
-zsh -n zsh/zshenv zsh/zprofile zsh/zshrc
-```
-
-Or run all local checks with:
+CI runs the same checks as this command, which needs Neovim nightly, Go, Python, Zsh, and ShellCheck:
 
 ```sh
 make validate
 ```
+
+To check only that the Neovim config loads, run `make smoke`. It clones the plugins at their locked
+revisions into a temporary directory and asserts on the loaded state, because plain `nvim --headless`
+exits 0 even when `init.lua` raises an error.
+
+To syntax-check Zsh files by hand, run `zsh -n` once per file. Given several files, it checks only the
+first and treats the others as script arguments.
 
 [ci]: https://github.com/chenkeyv/dotfiles/actions/workflows/ci.yml
 [ci-badge]: https://github.com/chenkeyv/dotfiles/actions/workflows/ci.yml/badge.svg
