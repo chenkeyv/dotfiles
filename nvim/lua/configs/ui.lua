@@ -2,6 +2,15 @@ local ui = require("vim._core.ui2")
 local group = vim.api.nvim_create_augroup("DotfilesUi2", { clear = true })
 local M = {}
 
+-- ui.wins, ui.bufs, ui.msg, and ui.cmd are undocumented ui2 internals, so
+-- tolerate them changing shape instead of raising on every command-line use.
+local function cmdline_window()
+	local win = ui.wins and ui.wins.cmd
+	if type(win) == "number" and vim.api.nvim_win_is_valid(win) then
+		return win
+	end
+end
+
 local function default_cmdline_position()
 	if vim.g.ui_cmdline_pos ~= nil then
 		return { vim.g.ui_cmdline_pos[1] - 1, vim.g.ui_cmdline_pos[2] }
@@ -12,8 +21,8 @@ local function default_cmdline_position()
 end
 
 function M.cmdline_position()
-	local win = ui.wins.cmd
-	if not vim.api.nvim_win_is_valid(win) then
+	local win = cmdline_window()
+	if not win then
 		return default_cmdline_position()
 	end
 
@@ -33,8 +42,9 @@ end
 
 function M.cmdline_cursor_position()
 	local position = M.cmdline_position()
-	local win = ui.wins.cmd
-	if not vim.api.nvim_win_is_valid(win) then
+	local win = cmdline_window()
+	local buf = ui.bufs and ui.bufs.cmd
+	if not win or type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then
 		return position
 	end
 
@@ -44,7 +54,7 @@ function M.cmdline_cursor_position()
 	end
 
 	local cursor = vim.api.nvim_win_get_cursor(win)
-	local line = vim.api.nvim_buf_get_lines(ui.bufs.cmd, cursor[1] - 1, cursor[1], false)[1] or ""
+	local line = vim.api.nvim_buf_get_lines(buf, cursor[1] - 1, cursor[1], false)[1] or ""
 	position[2] = position[2] + vim.fn.strdisplaywidth(line:sub(1, cursor[2]))
 
 	return position
@@ -60,12 +70,14 @@ local function keep_cmdline_floating()
 	vim._with({ noautocmd = true, o = { splitkeep = "screen" } }, function()
 		vim.o.cmdheight = 0
 	end)
-	ui.msg.set_pos()
+	if ui.msg and ui.msg.set_pos then
+		ui.msg.set_pos()
+	end
 end
 
 local function configure_cmdline()
-	local win = ui.wins.cmd
-	if not vim.api.nvim_win_is_valid(win) then
+	local win = cmdline_window()
+	if not win then
 		return
 	end
 
@@ -114,7 +126,7 @@ ui.enable({
 	},
 })
 
-if ui.cmd then
+if ui.cmd and ui.cmd.cmdline_show then
 	local cmdline_show = ui.cmd.cmdline_show
 	ui.cmd.cmdline_show = function(...)
 		cmdline_show(...)

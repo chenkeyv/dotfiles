@@ -4,7 +4,7 @@ local source_priority = {
 	path = 2,
 	buffer = 1,
 }
-local ui = require("configs.ui")
+local ui_ok, ui = pcall(require, "configs.ui")
 
 local function cmdline_position()
 	local position = ui.cmdline_cursor_position()
@@ -30,7 +30,8 @@ require("blink.cmp").setup({
 			"score",
 			"sort_text",
 		},
-		implementation = "prefer_rust",
+		-- Its library version check needs git and, if that fails, skips completion setup.
+		implementation = vim.fn.executable("git") == 1 and "prefer_rust" or "lua",
 		-- prebuilt_binaries = {
 		-- 	force_version = "*",
 		-- },
@@ -49,7 +50,7 @@ require("blink.cmp").setup({
 		},
 		menu = {
 			border = "none",
-			cmdline_position = cmdline_position,
+			cmdline_position = ui_ok and cmdline_position or nil,
 		},
 		documentation = {
 			auto_show = true,
@@ -61,7 +62,9 @@ require("blink.cmp").setup({
 		["<Tab>"] = { "select_next", "fallback" },
 		["<S-Tab>"] = { "select_prev", "fallback" },
 		["<CR>"] = { "fallback" },
-		["<C-e>"] = { "fallback" },
+		-- Only accept applies auto-imports and snippets; selecting just previews.
+		["<C-y>"] = { "accept", "fallback" },
+		["<C-e>"] = { "cancel", "fallback" },
 	},
 
 	appearance = {
@@ -86,6 +89,7 @@ require("blink.cmp").setup({
 			["<Tab>"] = { "select_next", "fallback" },
 			["<S-Tab>"] = { "select_prev", "fallback" },
 			["<CR>"] = { "fallback" },
+			["<C-y>"] = { "accept", "fallback" },
 		},
 		completion = {
 			list = {

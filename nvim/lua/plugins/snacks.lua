@@ -39,14 +39,16 @@ vim.keymap.set({ "n" }, "<leader>fb", function()
 	Snacks.picker.buffers()
 end, { noremap = true, silent = true, desc = "Find buffers" })
 
-vim.keymap.set({ "n" }, "gr", function()
+-- These replace Neovim's own gr* LSP defaults. A bare "gr" would wait for
+-- 'timeoutlen', and "gi" and "td" would shadow built-in motions.
+vim.keymap.set({ "n" }, "grr", function()
 	Snacks.picker.lsp_references()
 end, { noremap = true, silent = true, desc = "Find references" })
 
-vim.keymap.set({ "n" }, "gi", function()
+vim.keymap.set({ "n" }, "gri", function()
 	Snacks.picker.lsp_implementations()
 end, { noremap = true, silent = true, desc = "Find implementations" })
 
-vim.keymap.set({ "n" }, "td", function()
+vim.keymap.set({ "n" }, "grt", function()
 	Snacks.picker.lsp_type_definitions()
 end, { noremap = true, silent = true, desc = "Find type definitions" })
