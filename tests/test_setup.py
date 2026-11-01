@@ -57,6 +57,9 @@ class SetupTests(unittest.TestCase):
         skip_skills: bool = False,
         skip_plugins: bool = False,
         skip_font: bool = True,
+        skip_node: bool = True,
+        skip_editor_tools: bool = True,
+        skip_skillhub: bool = True,
         dry_run: bool = True,
         force: bool = False,
         env_updates: dict[str, str] | None = None,
@@ -67,11 +70,15 @@ class SetupTests(unittest.TestCase):
             "--skip-neovim-install",
             "--skip-zsh-install",
             "--skip-python-install",
-            "--skip-node-install",
-            "--skip-skillhub-install",
             "--packages-file",
             str(packages),
         ]
+        if skip_node:
+            args.append("--skip-node-install")
+        if skip_editor_tools:
+            args.append("--skip-editor-tools-install")
+        if skip_skillhub:
+            args.append("--skip-skillhub-install")
         if dry_run:
             args.append("--dry-run")
         if force:
@@ -103,14 +110,202 @@ class SetupTests(unittest.TestCase):
             text=True,
         )
 
+    def isolated_path(self) -> Path:
+        """Return a PATH directory hiding the developer tools on this machine."""
+        directory = self.temp_path / "isolated-bin"
+        directory.mkdir(exist_ok=True)
+        for command in ("date", "dirname", "readlink", "sed"):
+            source = shutil.which(command)
+            self.assertIsNotNone(source)
+            link = directory / command
+            if not link.exists():
+                link.symlink_to(source)
+        python = directory / "python3"
+        if not python.exists():
+            python.symlink_to(sys.executable)
+        self.write_executable(directory, "uname", "echo Darwin\n")
+        self.write_executable(directory, "brew", "exit 0\n")
+        return directory
+
+    def test_only_missing_tools_are_installed(self) -> None:
+        directory = self.isolated_path()
+        self.write_executable(directory, "node", "exit 0\n")
+        packages = self.write_packages()
+
+        result = self.run_setup(
+            packages,
+            skip_skills=True,
+            skip_plugins=True,
+            skip_node=False,
+            env_updates={"PATH": str(directory)},
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("brew install pnpm\n", result.stdout)
+        self.assertNotIn("brew install node", result.stdout)
+
+        self.write_executable(directory, "pnpm", "exit 0\n")
+        repeated = self.run_setup(
+            packages,
+            skip_skills=True,
+            skip_plugins=True,
+            skip_node=False,
+            env_updates={"PATH": str(directory)},
+        )
+
+        self.assertEqual(repeated.returncode, 0, repeated.stderr)
+        self.assertIn("Node.js and pnpm already installed.", repeated.stdout)
+        self.assertNotIn("brew install", repeated.stdout)
+
+    def test_editor_tools_install_each_package_once(self) -> None:
+        result = self.run_setup(
+            self.write_packages(),
+            skip_skills=True,
+            skip_plugins=True,
+            skip_editor_tools=False,
+            env_updates={"PATH": str(self.isolated_path())},
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        install = next(
+            line for line in result.stdout.splitlines() if "brew install " in line
+        )
+        packages = install.split("brew install ", 1)[1].split()
+        self.assertEqual(len(packages), len(set(packages)), install)
+        for package in (
+            "tree-sitter-cli",
+            "vscode-langservers-extracted",
+            "gopls",
+            "typescript",
+            "stylua",
+        ):
+            self.assertIn(package, packages)
+
+    def test_skillhub_is_fetched_only_when_a_skill_needs_it(self) -> None:
+        env_updates = {"PATH": str(self.isolated_path())}
+
+        unused = self.run_setup(
+            self.write_packages(skills=[{"name": "surge", "installer": "app"}]),
+            skip_plugins=True,
+            skip_skillhub=False,
+            env_updates=env_updates,
+        )
+        self.assertEqual(unused.returncode, 0, unused.stderr)
+        self.assertNotIn("install.sh", unused.stdout)
+
+        needed = self.run_setup(
+            self.write_packages(skills=[{"name": "demo", "installer": "skillhub"}]),
+            skip_plugins=True,
+            skip_skillhub=False,
+            env_updates=env_updates,
+        )
+        self.assertEqual(needed.returncode, 0, needed.stderr)
+        self.assertIn("install.sh", needed.stdout)
+        self.assertIn("install demo --dir", needed.stdout)
+
+        refused = self.run_setup(
+            self.write_packages(skills=[{"name": "demo", "installer": "skillhub"}]),
+            skip_plugins=True,
+            env_updates=env_updates,
+        )
+        self.assertEqual(refused.returncode, 1, refused.stdout)
+        self.assertIn("SkillHub CLI is required", refused.stderr)
+
+    def test_missing_codex_skips_plugins_with_a_warning(self) -> None:
+        result = self.run_setup(
+            self.write_packages(plugins=["example@personal"]),
+            skip_skills=True,
+            dry_run=False,
+            force=True,
+            env_updates={"PATH": f"{self.isolated_path()}:/bin:/usr/bin"},
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Codex CLI not found; skipping 1 configured plugins.", result.stdout)
+        self.assertIn("Dotfiles installed.", result.stdout)
+
+    def test_plugin_failure_tries_the_rest_and_reads_the_list_once(self) -> None:
+        fake_bin = self.temp_path / "bin"
+        calls = self.temp_path / "codex-calls"
+        self.write_executable(
+            fake_bin,
+            "codex",
+            f'echo "$*" >> "{calls}"\n'
+            'if [ "$1 $2" = "plugin list" ]; then\n'
+            "  printf '%s\\n' '{\"installed\":[{\"pluginId\":\"done@market\",\"installed\":true,\"enabled\":true}]}'\n"
+            "  exit 0\n"
+            "fi\n"
+            'case "$3" in\n'
+            "  bad@market) echo 'not found' >&2; exit 23 ;;\n"
+            "esac\n",
+        )
+
+        result = self.run_setup(
+            self.write_packages(plugins=["done@market", "bad@market", "good@market"]),
+            skip_skills=True,
+            dry_run=False,
+            force=True,
+            env_updates={"PATH": f"{fake_bin}:{os.environ['PATH']}"},
+        )
+
+        self.assertEqual(result.returncode, 23, result.stderr)
+        self.assertIn("Failed to install Codex plugin bad@market", result.stderr)
+        self.assertEqual(
+            calls.read_text(encoding="utf-8").splitlines(),
+            ["plugin list --json", "plugin add bad@market", "plugin add good@market"],
+        )
+        self.assertIn(
+            "Codex plugin already installed and enabled: done@market", result.stdout
+        )
+
+    def test_personal_plugins_get_a_marketplace_entry(self) -> None:
+        fake_bin = self.fake_codex("other@personal")
+        marketplace = self.home / ".agents" / "plugins" / "marketplace.json"
+
+        result = self.run_setup(
+            self.write_packages(plugins=["task-skills@personal", "agent-toolbox@personal"]),
+            skip_skills=True,
+            dry_run=False,
+            force=True,
+            env_updates={"PATH": f"{fake_bin}:{os.environ['PATH']}"},
+        )
+
+        # The fake codex refuses `plugin add`; the entries come first regardless.
+        self.assertEqual(result.returncode, 1, result.stderr)
+        data = json.loads(marketplace.read_text(encoding="utf-8"))
+        self.assertEqual(
+            {entry["name"]: entry["source"]["url"] for entry in data["plugins"]},
+            {
+                "task-skills": "https://github.com/chenkeyv/task-skills.git",
+                "agent-toolbox": AGENT_TOOLBOX_URL,
+            },
+        )
+
+    def test_setup_retires_home_zsh_links_but_keeps_real_files(self) -> None:
+        (self.home / ".zprofile").symlink_to(ROOT / "zsh" / "zprofile")
+        (self.home / ".zshrc").write_text("# Mine\n", encoding="utf-8")
+
+        result = self.run_setup(
+            self.write_packages(),
+            skip_skills=True,
+            skip_plugins=True,
+            dry_run=False,
+            force=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.home / ".zprofile").is_symlink())
+        self.assertEqual((self.home / ".zshrc").read_text(encoding="utf-8"), "# Mine\n")
+        self.assertIn(f"Note: zsh ignores {self.home / '.zshrc'}", result.stdout)
+
     def test_zsh_configs_survive_plugin_failure_and_rerun(self) -> None:
         config_home = self.temp_path / "custom config"
         zsh_dir = config_home / "zsh"
         zsh_dir.mkdir(parents=True)
         local_config = zsh_dir / "local.zsh"
         local_config.write_text("export LOCAL_SETTING=preserved\n", encoding="utf-8")
-        original_rc = "# Existing Zsh config\n"
-        (self.home / ".zshrc").write_text(original_rc, encoding="utf-8")
+        original_env = "# Existing Zsh environment\n"
+        (self.home / ".zshenv").write_text(original_env, encoding="utf-8")
         fake_bin = self.temp_path / "bin"
         self.write_executable(
             fake_bin,
@@ -136,19 +331,22 @@ class SetupTests(unittest.TestCase):
         self.assertIn("Simulated plugin installation failure", failed.stderr)
         self.assertIn("exec zsh -l", failed.stdout)
         self.assertNotIn("Dotfiles installed.", failed.stdout)
-        for name in ("zshenv", "zprofile", "zshrc"):
-            for directory in (self.home, zsh_dir):
-                target = directory / f".{name}"
-                self.assertTrue(target.is_symlink(), str(target))
-                self.assertEqual(target.resolve(), ROOT / "zsh" / name)
+        for target, name in (
+            (self.home / ".zshenv", "zshenv"),
+            (zsh_dir / ".zshenv", "zshenv"),
+            (zsh_dir / ".zprofile", "zprofile"),
+            (zsh_dir / ".zshrc", "zshrc"),
+        ):
+            self.assertTrue(target.is_symlink(), str(target))
+            self.assertEqual(target.resolve(), ROOT / "zsh" / name)
         for name in ("plugins.txt", "plugins-late.txt"):
             self.assertEqual((zsh_dir / name).resolve(), ROOT / "zsh" / name)
         self.assertEqual(
             (config_home / "starship.toml").resolve(), ROOT / "starship" / "starship.toml"
         )
-        backups = list((config_home / "dotfiles-backups").glob("zshrc.home.*"))
+        backups = list((config_home / "dotfiles-backups").glob("zshenv.2*"))
         self.assertEqual(len(backups), 1)
-        self.assertEqual(backups[0].read_text(encoding="utf-8"), original_rc)
+        self.assertEqual(backups[0].read_text(encoding="utf-8"), original_env)
 
         repeated = self.run_setup(
             packages, dry_run=False, skip_skills=True, skip_plugins=True, env_updates=env
@@ -157,7 +355,7 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(repeated.returncode, 0, repeated.stderr)
         self.assertIn("Dotfiles installed.", repeated.stdout)
         self.assertEqual(
-            list((config_home / "dotfiles-backups").glob("zshrc.home.*")), backups
+            list((config_home / "dotfiles-backups").glob("zshenv.2*")), backups
         )
         self.assertEqual(
             local_config.read_text(encoding="utf-8"), "export LOCAL_SETTING=preserved\n"
@@ -379,7 +577,7 @@ class SetupTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(
-            "Configuring Agent Toolbox in the personal Codex marketplace.",
+            "Adding agent-toolbox to the personal Codex marketplace.",
             result.stdout,
         )
         self.assertIn("codex plugin add agent-toolbox@personal", result.stdout)
@@ -450,6 +648,139 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f"mv {target}", result.stdout)
         self.assertIn(f"ln -s {source} {target}", result.stdout)
+
+
+@unittest.skipUnless(shutil.which("zsh"), "zsh is not installed")
+class ZshConfigTests(unittest.TestCase):
+    FAKE_ANTIDOTE = """
+antidote() {
+  [[ "$1" == bundle ]] || return 0
+  if [[ -n "${FAKE_ANTIDOTE_FAIL:-}" ]]; then
+    print -u2 'fatal: simulated offline clone'
+    return 1
+  fi
+  print 'typeset -g FAKE_PLUGIN_LOADED=1'
+}
+"""
+
+    def setUp(self) -> None:
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        self.home = Path(temp_dir.name).resolve()
+        zsh_dir = self.home / ".config" / "zsh"
+        zsh_dir.mkdir(parents=True)
+        (self.home / ".zshenv").symlink_to(ROOT / "zsh" / "zshenv")
+        (zsh_dir / ".zshenv").symlink_to(ROOT / "zsh" / "zshenv")
+        (zsh_dir / ".zprofile").symlink_to(ROOT / "zsh" / "zprofile")
+        (zsh_dir / ".zshrc").symlink_to(ROOT / "zsh" / "zshrc")
+        (zsh_dir / "plugins.txt").write_text("owner/repo\n", encoding="utf-8")
+        antidote = self.home / ".local" / "share" / "dotfiles" / "antidote"
+        antidote.mkdir(parents=True)
+        (antidote / "antidote.zsh").write_text(self.FAKE_ANTIDOTE, encoding="utf-8")
+        self.bundle = self.home / ".cache" / "zsh" / "plugins.zsh"
+
+    def zsh(
+        self, flags: str, command: str, env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [shutil.which("zsh"), flags, command],
+            env={
+                "HOME": str(self.home),
+                "PATH": "/usr/bin:/bin",
+                "TERM": "dumb",
+                **(env or {}),
+            },
+            stdin=subprocess.DEVNULL,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    def plugin_loaded(self, env: dict[str, str] | None = None) -> str:
+        result = self.zsh("-ic", "print -r -- @@${FAKE_PLUGIN_LOADED:-no}", env)
+        return result.stdout.rsplit("@@", 1)[-1].strip()
+
+    def test_failed_plugin_download_is_retried(self) -> None:
+        offline = self.zsh("-ic", "true", {"FAKE_ANTIDOTE_FAIL": "1"})
+
+        self.assertIn("could not update zsh plugins", offline.stderr)
+        self.assertFalse(self.bundle.exists())
+        self.assertEqual(self.plugin_loaded(), "1")
+
+    def test_empty_bundle_from_an_older_failure_heals(self) -> None:
+        self.bundle.parent.mkdir(parents=True)
+        self.bundle.touch()
+        future = self.bundle.stat().st_mtime + 60
+        os.utime(self.bundle, (future, future))
+
+        self.assertEqual(self.plugin_loaded(), "1")
+        self.assertGreater(self.bundle.stat().st_size, 0)
+
+    def test_failed_update_keeps_the_working_bundle(self) -> None:
+        self.assertEqual(self.plugin_loaded(), "1")
+        working = self.bundle.read_text(encoding="utf-8")
+        past = self.bundle.stat().st_mtime - 60
+        os.utime(self.bundle, (past, past))
+
+        self.assertEqual(self.plugin_loaded({"FAKE_ANTIDOTE_FAIL": "1"}), "1")
+        self.assertEqual(self.bundle.read_text(encoding="utf-8"), working)
+
+    def user_path(self, flags: str, env: dict[str, str] | None = None) -> list[str]:
+        result = self.zsh(flags, "print -r -- @@; print -rl -- $path", env)
+        entries = result.stdout.rsplit("@@", 1)[-1].split()
+        return [entry for entry in entries if entry.startswith(str(self.home))]
+
+    def test_every_shell_type_resolves_the_same_user_tools(self) -> None:
+        for directory in (".local/bin", "bin", ".cargo/bin", "go/bin"):
+            (self.home / directory).mkdir(parents=True, exist_ok=True)
+        expected = [
+            str(self.home / directory)
+            for directory in (".local/bin", "bin", ".cargo/bin", "go/bin")
+        ]
+
+        for flags in ("-lc", "-ic", "-lic"):
+            with self.subTest(flags=flags):
+                self.assertEqual(self.user_path(flags), expected)
+
+    def test_nested_shell_keeps_the_callers_path_order(self) -> None:
+        virtualenv = self.home / "venv" / "bin"
+        virtualenv.mkdir(parents=True)
+        (self.home / ".local" / "bin").mkdir(parents=True)
+
+        entries = self.user_path(
+            "-ic",
+            {"PATH": f"{virtualenv}:/usr/bin:/bin", "DOTFILES_ZPROFILE_LOADED": "1"},
+        )
+
+        self.assertEqual(entries[0], str(virtualenv))
+
+    def test_history_settings_do_not_reach_child_shells(self) -> None:
+        result = self.zsh(
+            "-ic",
+            "print -r -- @@; /usr/bin/env | /usr/bin/grep -E '^(HISTFILE|HISTSIZE|SAVEHIST)=' || print none",
+            {"HISTFILE": str(self.home / "from-parent"), "HISTSIZE": "1"},
+        )
+
+        self.assertEqual(result.stdout.rsplit("@@", 1)[-1].strip(), "none")
+
+    def test_only_one_history_sharing_mode_is_enabled(self) -> None:
+        result = self.zsh(
+            "-ic",
+            "print -r -- @@$options[share_history],$options[inc_append_history_time]",
+        )
+
+        self.assertEqual(result.stdout.rsplit("@@", 1)[-1].strip(), "on,off")
+
+    def test_iterm_integration_loads_only_in_iterm(self) -> None:
+        (self.home / ".iterm2_shell_integration.zsh").write_text(
+            "typeset -g ITERM_LOADED=yes\n", encoding="utf-8"
+        )
+        command = "print -r -- @@${ITERM_LOADED:-no}"
+
+        for terminal, expected in (("ghostty", "no"), ("iTerm.app", "yes")):
+            with self.subTest(terminal=terminal):
+                result = self.zsh("-ic", command, {"TERM_PROGRAM": terminal})
+                self.assertEqual(result.stdout.rsplit("@@", 1)[-1].strip(), expected)
 
 
 if __name__ == "__main__":

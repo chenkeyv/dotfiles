@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ensure the personal Codex marketplace exposes Agent Toolbox."""
+"""Ensure the personal Codex marketplace exposes a Git-backed plugin."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any
 
 
-def expected_entry(source_url: str) -> dict[str, Any]:
+def expected_entry(name: str, source_url: str) -> dict[str, Any]:
     return {
-        "name": "agent-toolbox",
+        "name": name,
         "source": {
             "source": "url",
             "url": source_url,
@@ -47,18 +47,18 @@ def load_marketplace(path: Path) -> dict[str, Any]:
     return data
 
 
-def entry_is_current(data: dict[str, Any], source_url: str) -> bool:
-    expected = expected_entry(source_url)
+def entry_is_current(data: dict[str, Any], name: str, source_url: str) -> bool:
+    expected = expected_entry(name, source_url)
     for entry in data["plugins"]:
-        if isinstance(entry, dict) and entry.get("name") == "agent-toolbox":
+        if isinstance(entry, dict) and entry.get("name") == name:
             return all(entry.get(key) == value for key, value in expected.items())
     return False
 
 
-def update_marketplace(data: dict[str, Any], source_url: str) -> None:
-    expected = expected_entry(source_url)
+def update_marketplace(data: dict[str, Any], name: str, source_url: str) -> None:
+    expected = expected_entry(name, source_url)
     for index, entry in enumerate(data["plugins"]):
-        if isinstance(entry, dict) and entry.get("name") == "agent-toolbox":
+        if isinstance(entry, dict) and entry.get("name") == name:
             data["plugins"][index] = {**entry, **expected}
             break
     else:
@@ -71,14 +71,15 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("marketplace", type=Path)
     parser.add_argument("source_url")
+    parser.add_argument("--name", default="agent-toolbox")
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
 
     data = load_marketplace(args.marketplace)
     if args.check:
-        return 0 if entry_is_current(data, args.source_url) else 1
+        return 0 if entry_is_current(data, args.name, args.source_url) else 1
 
-    update_marketplace(data, args.source_url)
+    update_marketplace(data, args.name, args.source_url)
     args.marketplace.parent.mkdir(parents=True, exist_ok=True)
     args.marketplace.write_text(
         json.dumps(data, ensure_ascii=False, indent=2) + "\n",
