@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,15 +18,27 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
 const (
 	manifestPath        = ".dotfiles-bundle/manifest.json"
 	toolsPrefix         = ".dotfiles-bundle/tools/"
+	dataArchivePath     = ".dotfiles-bundle/data.tar.gz"
+	dataStampPath       = "dotfiles/bundle-data.sha256"
 	embeddedPayloadDir  = "payload"
 	embeddedPayloadPath = "cmd/dotfiles/" + embeddedPayloadDir
 )
+
+// dataUnits are the prebuilt directories under the data home that make the
+// config work offline. Each one is replaced as a whole, so a plugin tree never
+// mixes files from two builds.
+var dataUnits = []string{
+	"nvim/site",
+	"dotfiles/antidote",
+	"dotfiles/antidote-home",
+}
 
 type manifest struct {
 	Version   int             `json:"version"`
@@ -47,11 +61,26 @@ type bundleOptions struct {
 	mode     string
 	baseDir  string
 	toolsDir string
+	dataDir  string
 	inputs   []string
+}
+
+// exitCodeError carries a bundled tool's exit status back to main, so that
+// deferred cleanup still runs before the process exits with that status.
+type exitCodeError struct {
+	code int
+}
+
+func (e exitCodeError) Error() string {
+	return fmt.Sprintf("exit status %d", e.code)
 }
 
 func main() {
 	if err := run(os.Args); err != nil {
+		var exit exitCodeError
+		if errors.As(err, &exit) {
+			os.Exit(exit.code)
+		}
 		fmt.Fprintf(os.Stderr, "dotfiles: %v\n", err)
 		os.Exit(1)
 	}
@@ -146,6 +175,7 @@ func packCommand(args []string) error {
 	output := fs.String("o", "", "output payload directory")
 	repo := fs.String("repo", ".", "dotfiles repo root")
 	toolsDir := fs.String("tools-dir", "", "directory containing tool binaries or a bin subdirectory")
+	dataDir := fs.String("data-dir", "", "data home with prebuilt Neovim plugins, parsers, and Zsh plugins")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -167,6 +197,7 @@ func packCommand(args []string) error {
 		mode:     "dotfiles",
 		baseDir:  repoRoot,
 		toolsDir: *toolsDir,
+		dataDir:  *dataDir,
 		inputs:   inputs,
 	}, *output); err != nil {
 		return err
@@ -186,7 +217,6 @@ func dotfilesBundleInputs(repoRoot string) []string {
 		"AGENTS.md",
 		"Makefile",
 		"codex-packages.json",
-		"patches",
 		"scripts",
 	})
 }
@@ -222,6 +252,15 @@ func buildPayload(opts bundleOptions, output string) error {
 		}
 	}
 
+	if opts.dataDir != "" {
+		dest := filepath.Join(tmp, filepath.FromSlash(dataArchivePath))
+		if err := writeDataArchive(opts.dataDir, dest); err != nil {
+			_ = os.RemoveAll(tmp)
+			return err
+		}
+		m.Entries = append(m.Entries, manifestEntry{Path: dataArchivePath, Type: "file", Mode: 0o644})
+	}
+
 	sort.Slice(m.Entries, func(i, j int) bool {
 		return m.Entries[i].Path < m.Entries[j].Path
 	})
@@ -236,27 +275,6 @@ func buildPayload(opts bundleOptions, output string) error {
 		return err
 	}
 	return os.Rename(tmp, output)
-}
-
-func validateInputs(baseDir string, inputs []string) error {
-	for _, input := range inputs {
-		if !safeInputPath(input) {
-			return fmt.Errorf("unsafe input path: %s", input)
-		}
-		source := filepath.Join(baseDir, filepath.FromSlash(input))
-		if _, err := os.Lstat(source); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func safeInputPath(name string) bool {
-	if name == "" || filepath.IsAbs(name) {
-		return false
-	}
-	clean := path.Clean(filepath.ToSlash(name))
-	return clean != "." && clean != ".." && !strings.HasPrefix(clean, "../")
 }
 
 func existingPaths(base string, names []string) []string {
@@ -371,6 +389,249 @@ func addTools(output, toolsDir string, tools *[]string, entries *[]manifestEntry
 		}
 		return nil
 	})
+}
+
+// writeDataArchive packs dataUnits into one gzipped tar. go:embed would drop
+// their .git directories, reject unusual file names, and store them uncompressed.
+func writeDataArchive(dataDir, dest string) (err error) {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	file, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := file.Close(); err == nil {
+			err = closeErr
+		}
+	}()
+	gz, err := gzip.NewWriterLevel(file, gzip.BestCompression)
+	if err != nil {
+		return err
+	}
+	tw := tar.NewWriter(gz)
+
+	found := false
+	for _, unit := range dataUnits {
+		root := filepath.Join(dataDir, filepath.FromSlash(unit))
+		if _, err := os.Lstat(root); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return err
+		}
+		found = true
+		if err := addDataTree(tw, dataDir, root); err != nil {
+			return err
+		}
+	}
+	if !found {
+		return fmt.Errorf("no bundle data found under %s", dataDir)
+	}
+
+	if err := tw.Close(); err != nil {
+		return err
+	}
+	return gz.Close()
+}
+
+func addDataTree(tw *tar.Writer, dataDir, root string) error {
+	return filepath.WalkDir(root, func(current string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dataDir, current)
+		if err != nil {
+			return err
+		}
+
+		link := ""
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			target, err := os.Readlink(current)
+			if err != nil {
+				return err
+			}
+			link, err = portableLink(dataDir, rel, target)
+			if err != nil {
+				return err
+			}
+		case !info.IsDir() && !info.Mode().IsRegular():
+			return nil
+		}
+
+		header, err := tar.FileInfoHeader(info, link)
+		if err != nil {
+			return err
+		}
+		header.Name = filepath.ToSlash(rel)
+		if info.IsDir() {
+			header.Name += "/"
+		}
+		header.Uid, header.Gid, header.Uname, header.Gname = 0, 0, "", ""
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+
+		in, err := os.Open(current)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		_, err = io.Copy(tw, in)
+		return err
+	})
+}
+
+// portableLink makes a symlink usable on another machine. nvim-treesitter links
+// queries with absolute paths, which would otherwise point at the build host.
+func portableLink(dataDir, linkRel, target string) (string, error) {
+	if !filepath.IsAbs(target) {
+		return target, nil
+	}
+
+	roots := []string{dataDir}
+	if abs, err := filepath.Abs(dataDir); err == nil {
+		roots = append(roots, abs)
+	}
+	if real, err := filepath.EvalSymlinks(dataDir); err == nil {
+		roots = append(roots, real)
+	}
+	for _, root := range roots {
+		targetRel, err := filepath.Rel(root, target)
+		if err != nil || targetRel == ".." || strings.HasPrefix(targetRel, ".."+string(os.PathSeparator)) {
+			continue
+		}
+		return filepath.Rel(filepath.Dir(linkRel), targetRel)
+	}
+	return "", fmt.Errorf("symlink %s points outside the data directory: %s", linkRel, target)
+}
+
+func extractDataArchive(r io.Reader, dest string) error {
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		header, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		name := strings.TrimSuffix(header.Name, "/")
+		if !safeArchiveName(name) {
+			return fmt.Errorf("unsafe data path: %s", header.Name)
+		}
+		target := filepath.Join(dest, filepath.FromSlash(name))
+		mode := fs.FileMode(header.Mode).Perm()
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, mode|0o700); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(out, tr); err != nil {
+				_ = out.Close()
+				return err
+			}
+			if err := out.Close(); err != nil {
+				return err
+			}
+		case tar.TypeSymlink:
+			if path.IsAbs(header.Linkname) || !safeArchiveName(path.Join(path.Dir(name), header.Linkname)) {
+				return fmt.Errorf("unsafe data symlink: %s -> %s", header.Name, header.Linkname)
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			if err := os.Symlink(header.Linkname, target); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// installBundledData unpacks the prebuilt data once per bundle build. Rerunning
+// apply with the same bundle leaves it, and any local updates to it, alone.
+func installBundledData(payloadRoot, dataHome string, inst installer) error {
+	archive, err := os.Open(filepath.Join(payloadRoot, filepath.FromSlash(dataArchivePath)))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	defer archive.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, archive); err != nil {
+		return err
+	}
+	sum := hex.EncodeToString(hash.Sum(nil))
+	stamp := filepath.Join(dataHome, filepath.FromSlash(dataStampPath))
+	if current, err := os.ReadFile(stamp); err == nil && strings.TrimSpace(string(current)) == sum {
+		fmt.Printf("Bundled editor and shell data is already current in %s\n", dataHome)
+		return nil
+	}
+	if _, err := archive.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(dataHome, 0o755); err != nil {
+		return err
+	}
+	staging, err := os.MkdirTemp(dataHome, ".dotfiles-data-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(staging)
+	if err := extractDataArchive(archive, staging); err != nil {
+		return err
+	}
+
+	for _, unit := range dataUnits {
+		source := filepath.Join(staging, filepath.FromSlash(unit))
+		if _, err := os.Lstat(source); err != nil {
+			continue
+		}
+		target := filepath.Join(dataHome, filepath.FromSlash(unit))
+		if err := inst.prepare(target); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		if err := os.Rename(source, target); err != nil {
+			return err
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(stamp), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(stamp, []byte(sum+"\n"), 0o644)
 }
 
 func writeManifest(output string, m manifest) error {
@@ -559,6 +820,12 @@ func applyCommand(args []string) error {
 			configHome = env
 		}
 	}
+	dataHome := filepath.Join(home, ".local", "share")
+	if *homeFlag == "" {
+		if env := os.Getenv("XDG_DATA_HOME"); env != "" {
+			dataHome = env
+		}
+	}
 	localBin := filepath.Join(home, ".local", "bin")
 	backupRoot := filepath.Join(configHome, "dotfiles-bundle-backups", time.Now().UTC().Format("20060102150405"))
 
@@ -568,8 +835,6 @@ func applyCommand(args []string) error {
 		{src: filepath.Join(temp, "starship", "starship.toml"), dst: filepath.Join(configHome, "starship.toml")},
 		{src: filepath.Join(temp, "ghostty", "config"), dst: filepath.Join(configHome, "ghostty", "config")},
 		{src: filepath.Join(temp, "zsh", "zshenv"), dst: filepath.Join(home, ".zshenv")},
-		{src: filepath.Join(temp, "zsh", "zprofile"), dst: filepath.Join(home, ".zprofile")},
-		{src: filepath.Join(temp, "zsh", "zshrc"), dst: filepath.Join(home, ".zshrc")},
 		{src: filepath.Join(temp, "zsh", "zshenv"), dst: filepath.Join(configHome, "zsh", ".zshenv")},
 		{src: filepath.Join(temp, "zsh", "zprofile"), dst: filepath.Join(configHome, "zsh", ".zprofile")},
 		{src: filepath.Join(temp, "zsh", "zshrc"), dst: filepath.Join(configHome, "zsh", ".zshrc")},
@@ -596,18 +861,35 @@ func applyCommand(args []string) error {
 		}
 	}
 
+	if err := installBundledData(temp, dataHome, inst); err != nil {
+		return err
+	}
+
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	dotfilesTarget := filepath.Join(localBin, "dotfiles")
-	if err := inst.install(exe, dotfilesTarget); err != nil {
+	if err := installSelf(inst, exe, filepath.Join(localBin, "dotfiles")); err != nil {
 		return err
 	}
 
 	fmt.Printf("Applied bundle into %s\n", home)
 	fmt.Printf("Ensure %s is on PATH.\n", localBin)
 	return nil
+}
+
+// installSelf copies the running binary to target, unless target is the running
+// binary: moving it aside first would leave nothing to copy from.
+func installSelf(inst installer, exe, target string) error {
+	exeInfo, err := os.Stat(exe)
+	if err != nil {
+		return err
+	}
+	targetInfo, err := os.Stat(target)
+	if err == nil && os.SameFile(exeInfo, targetInfo) {
+		return nil
+	}
+	return inst.install(exe, target)
 }
 
 type installRule struct {
@@ -806,7 +1088,18 @@ func runBundledTool(name string, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
-	return cmd.Run()
+	return toolExitError(cmd.Run())
+}
+
+func toolExitError(err error) error {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return err
+	}
+	if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+		return exitCodeError{code: 128 + int(status.Signal())}
+	}
+	return exitCodeError{code: exitErr.ExitCode()}
 }
 
 func extractToolTree(target string) error {

@@ -42,21 +42,28 @@ jobs:
           mkdir -p dist
           go build -trimpath -o dist/dotfiles-pack ./cmd/dotfiles
 
+      - name: Install Zsh
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
+
       - name: Set up Rust for source-built tools
         if: matrix.target == 'darwin-amd64'
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
 
-      - name: Download portable tools
+      - name: Download portable tools and prepare offline data
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/fetch-tools.sh ${{ matrix.target }} dist/tools/${{ matrix.target }}
+        run: scripts/fetch-tools.sh ${{ matrix.target }} dist/tools/${{ matrix.target }} dist/data/${{ matrix.target }}
 
       - name: Build embedded offline environment bundle
         run: |
           ./dist/dotfiles-pack pack \
             --tools-dir dist/tools/${{ matrix.target }} \
+            --data-dir dist/data/${{ matrix.target }} \
             -o cmd/dotfiles/payload
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build \
             -tags embedded \
@@ -67,9 +74,17 @@ jobs:
           ./dist/dotfiles-env-${{ matrix.target }} tool list
           ./dist/dotfiles-env-${{ matrix.target }} tool nvim --version
 
+      - name: Check the bundle works without a network
+        run: |
+          home="$RUNNER_TEMP/bundle-home"
+          mkdir -p "$home"
+          ./dist/dotfiles-env-${{ matrix.target }} apply --home "$home"
+          scripts/nvim-smoke.sh --home "$home"
+
       - name: Upload bundle artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dotfiles-env-${{ matrix.target }}
+          retention-days: 7
           path: |
             dist/dotfiles-env-${{ matrix.target }}
